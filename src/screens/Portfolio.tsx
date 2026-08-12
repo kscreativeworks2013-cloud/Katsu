@@ -1,11 +1,14 @@
 import { useState, type FormEvent } from 'react';
 import { GENRES } from '../data/workflow';
+import { resolveAsset } from '../domain/assets';
 import { useAppStore } from '../store/context';
+import { AssetPicker } from '../ui/AssetPicker';
 import { Card, Chips, EmptyState, Field, PageHeader } from '../ui/primitives';
 
 /** 3-12 ポートフォリオ管理：作品を蓄積し、提案書の実績頁の引用元にする。 */
 export function PortfolioScreen() {
-  const { portfolio, addPortfolioWork, removePortfolioWork } = useAppStore();
+  const { portfolio, addPortfolioWork, removePortfolioWork, updatePortfolioWork, assets } =
+    useAppStore();
   const [genre, setGenre] = useState('all');
   const [tag, setTag] = useState('all');
   const [draft, setDraft] = useState({
@@ -80,34 +83,48 @@ export function PortfolioScreen() {
           />
         ) : (
           <div className="grid grid--3">
-            {visible.map((work) => (
-              <figure className="tile" key={work.id} style={{ margin: 0 }}>
-                <div
-                  className="tile-art"
-                  style={{ ['--from' as string]: work.from, ['--to' as string]: work.to }}
-                  aria-hidden="true"
-                />
-                <figcaption className="tile-body">
-                  <h4>{work.title}</h4>
-                  <p>
-                    {work.client}／{work.genre}／{work.year}
-                  </p>
-                  <div style={{ marginTop: 8 }}>
-                    <Chips items={work.tags} />
-                  </div>
-                  <div className="actions" style={{ marginTop: 10 }}>
-                    <button
-                      className="btn btn--ghost btn--small"
-                      type="button"
-                      onClick={() => removePortfolioWork(work.id)}
-                      aria-label={`${work.title} を削除`}
-                    >
-                      削除
-                    </button>
-                  </div>
-                </figcaption>
-              </figure>
-            ))}
+            {visible.map((work) => {
+              const asset = resolveAsset(assets, work.assetId);
+              return (
+                <figure className="tile" key={work.id} style={{ margin: 0 }}>
+                  {asset?.thumbnail ? (
+                    <img className="tile-art" src={asset.thumbnail} alt={work.title} />
+                  ) : (
+                    <div
+                      className="tile-art"
+                      style={{ ['--from' as string]: work.from, ['--to' as string]: work.to }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <figcaption className="tile-body">
+                    <h4>{work.title}</h4>
+                    <p>
+                      {work.client}／{work.genre}／{work.year}
+                    </p>
+                    <div style={{ marginTop: 8 }}>
+                      <Chips items={work.tags} />
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <AssetPicker
+                        label={work.title}
+                        assetId={work.assetId}
+                        onChange={(assetId) => updatePortfolioWork(work.id, { assetId })}
+                      />
+                    </div>
+                    <div className="actions" style={{ marginTop: 10 }}>
+                      <button
+                        className="btn btn--ghost btn--small"
+                        type="button"
+                        onClick={() => removePortfolioWork(work.id)}
+                        aria-label={`${work.title} を削除`}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </figcaption>
+                </figure>
+              );
+            })}
           </div>
         )}
       </Card>

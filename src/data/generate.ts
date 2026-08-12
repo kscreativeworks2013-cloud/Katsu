@@ -321,6 +321,7 @@ export function emptyWorkspace(): Workspace {
     moodboard: [],
     shots: [],
     prompts: {},
+    proposalBody: {},
     exports: [],
   };
 }
@@ -351,6 +352,7 @@ export function fullWorkspace(
     moodboard,
     shots,
     prompts: {},
+    proposalBody: {},
     exports: [],
   };
 

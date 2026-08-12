@@ -2,8 +2,10 @@ import type { CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
 import type { MoodCategory, MoodTile } from '../data/types';
 import { MOOD_CATEGORY_LABEL } from '../data/workflow';
+import { resolveAsset } from '../domain/assets';
 import { createId } from '../lib/projects';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
+import { AssetPicker } from '../ui/AssetPicker';
 import { Card, EmptyState, PageHeader, Skeleton, Swatches } from '../ui/primitives';
 
 const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
@@ -12,7 +14,7 @@ const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
 export function MoodboardScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField } = useAppStore();
+  const { requestRun, editField, assets } = useAppStore();
   const pending = usePendingRun(projectId, 'moodboard');
   const busy = pending?.status === 'running';
   const blocked = pending !== undefined;
@@ -124,64 +126,88 @@ export function MoodboardScreen() {
                   <p className="muted">この章のタイルはまだありません。</p>
                 ) : (
                   <div className="grid grid--4">
-                    {rows.map((tile) => (
-                      <figure className="tile" key={tile.id} style={{ margin: 0 }}>
-                        <div
-                          className="tile-art"
-                          style={
-                            {
-                              '--from': tile.from,
-                              '--to': tile.to,
-                            } as CSSProperties
-                          }
-                          aria-hidden="true"
-                        />
-                        <figcaption className="tile-body">
-                          <label className="field">
-                            <span className="visually-hidden">キャプション</span>
-                            <input
-                              value={tile.caption}
-                              onChange={(event) =>
-                                write(
-                                  tiles.map((row) =>
-                                    row.id === tile.id
-                                      ? { ...row, caption: event.target.value }
-                                      : row,
-                                  ),
-                                )
-                              }
+                    {rows.map((tile) => {
+                      const asset = resolveAsset(assets, tile.assetId);
+                      return (
+                        <figure className="tile" key={tile.id} style={{ margin: 0 }}>
+                          {asset?.thumbnail ? (
+                            <img
+                              className="tile-art"
+                              src={asset.thumbnail}
+                              alt={tile.caption}
                             />
-                          </label>
-                          <p>出典：{tile.source}</p>
-                          <div className="actions" style={{ marginTop: 8 }}>
-                            <button
-                              className="btn btn--ghost btn--small"
-                              type="button"
-                              onClick={() => move(tile.id, -1)}
-                              aria-label={`${tile.caption} を前へ`}
-                            >
-                              ←
-                            </button>
-                            <button
-                              className="btn btn--ghost btn--small"
-                              type="button"
-                              onClick={() => move(tile.id, 1)}
-                              aria-label={`${tile.caption} を後ろへ`}
-                            >
-                              →
-                            </button>
-                            <button
-                              className="btn btn--ghost btn--small"
-                              type="button"
-                              onClick={() => write(tiles.filter((row) => row.id !== tile.id))}
-                              aria-label={`${tile.caption} を削除`}
-                            >
-                              削除
-                            </button>
-                          </div>
-                        </figcaption>
-                      </figure>
-                    ))}
+                          ) : (
+                            <div
+                              className="tile-art"
+                              style={
+                                {
+                                  '--from': tile.from,
+                                  '--to': tile.to,
+                                } as CSSProperties
+                              }
+                              aria-hidden="true"
+                            />
+                          )}
+                          <figcaption className="tile-body">
+                            <label className="field">
+                              <span className="visually-hidden">キャプション</span>
+                              <input
+                                value={tile.caption}
+                                onChange={(event) =>
+                                  write(
+                                    tiles.map((row) =>
+                                      row.id === tile.id
+                                        ? { ...row, caption: event.target.value }
+                                        : row,
+                                    ),
+                                  )
+                                }
+                              />
+                            </label>
+                            <p>出典：{tile.source}</p>
+                            <div style={{ marginTop: 8 }}>
+                              <AssetPicker
+                                label={tile.caption}
+                                assetId={tile.assetId}
+                                onChange={(assetId) =>
+                                  write(
+                                    tiles.map((row) =>
+                                      row.id === tile.id ? { ...row, assetId } : row,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="actions" style={{ marginTop: 8 }}>
+                              <button
+                                className="btn btn--ghost btn--small"
+                                type="button"
+                                onClick={() => move(tile.id, -1)}
+                                aria-label={`${tile.caption} を前へ`}
+                              >
+                                ←
+                              </button>
+                              <button
+                                className="btn btn--ghost btn--small"
+                                type="button"
+                                onClick={() => move(tile.id, 1)}
+                                aria-label={`${tile.caption} を後ろへ`}
+                              >
+                                →
+                              </button>
+                              <button
+                                className="btn btn--ghost btn--small"
+                                type="button"
+                                onClick={() => write(tiles.filter((row) => row.id !== tile.id))}
+                                aria-label={`${tile.caption} を削除`}
+                              >
+                                削除
+                              </button>
+                            </div>
+                          </figcaption>
+                        </figure>
+                      );
+                    })}
                   </div>
                 )}
               </Card>

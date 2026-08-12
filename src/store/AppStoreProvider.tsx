@@ -104,9 +104,9 @@ export function AppStoreProvider({
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingRun>>({});
 
   // 生成完了時に最新の状態で差分を取るための参照。レンダー中には触らない。
-  const latest = useRef({ projects, workspaces, provenance, pendingRuns });
+  const latest = useRef({ projects, workspaces, provenance, pendingRuns, settings, portfolio });
   useEffect(() => {
-    latest.current = { projects, workspaces, provenance, pendingRuns };
+    latest.current = { projects, workspaces, provenance, pendingRuns, settings, portfolio };
   });
 
   useEffect(() => {
@@ -317,6 +317,10 @@ export function AppStoreProvider({
       const project = latest.current.projects.find((item) => item.id === projectId);
       if (!project) return;
       const workspace = latest.current.workspaces[projectId] ?? emptyWorkspace();
+      const context = {
+        settings: latest.current.settings,
+        portfolio: latest.current.portfolio,
+      };
 
       const runId = createId('run');
       const run: Run = {
@@ -326,7 +330,7 @@ export function AppStoreProvider({
         startedAt: nowIso(),
         finishedAt: null,
         status: 'running',
-        inputsHash: inputsHash(stepId, project, workspace),
+        inputsHash: inputsHash(stepId, project, workspace, context),
         engine: engine.id,
       };
 
@@ -349,7 +353,7 @@ export function AppStoreProvider({
       }));
 
       engine
-        .run({ runId, stepId, project, workspace })
+        .run({ runId, stepId, project, workspace, ...context })
         .then((result) => finishRun(runId, projectId, stepId, result.values))
         .catch((error: unknown) =>
           failRun(
@@ -538,6 +542,12 @@ export function AppStoreProvider({
     setPortfolio((current) => [{ ...work, id: createId('wrk') }, ...current]);
   }, []);
 
+  const updatePortfolioWork = useCallback((workId: string, patch: Partial<PortfolioWork>) => {
+    setPortfolio((current) =>
+      current.map((work) => (work.id === workId ? { ...work, ...patch } : work)),
+    );
+  }, []);
+
   const removePortfolioWork = useCallback((workId: string) => {
     setPortfolio((current) => current.filter((work) => work.id !== workId));
   }, []);
@@ -568,6 +578,7 @@ export function AppStoreProvider({
       recordExports,
       registerAsset,
       addPortfolioWork,
+      updatePortfolioWork,
       removePortfolioWork,
       updateSettings,
     }),
@@ -592,6 +603,7 @@ export function AppStoreProvider({
       recordExports,
       registerAsset,
       addPortfolioWork,
+      updatePortfolioWork,
       removePortfolioWork,
       updateSettings,
     ],

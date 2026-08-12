@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { ExportFormat, ExportRecord, Language } from '../data/types';
 import { EXPORT_FORMAT_LABEL, LANGUAGE_LABEL } from '../data/workflow';
+import { markdownFileName, renderMarkdown, type Lang } from '../domain/markdown';
 import { createId, formatDate } from '../lib/projects';
 import { staleStepLabels } from '../lib/projects';
+import { downloadTextFile } from '../lib/download';
 import { useAppStore, useProject } from '../store/context';
 import { Badge, Card, EmptyState, Field, PageHeader } from '../ui/primitives';
 
@@ -19,7 +21,7 @@ const EXTENSION: Record<ExportFormat, string> = {
 export function ExportScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { recordExports } = useAppStore();
+  const { recordExports, portfolio, assets, settings } = useAppStore();
   const [formats, setFormats] = useState<ExportFormat[]>(['pdf', 'pptx']);
   const [language, setLanguage] = useState<Language>('both');
   const [template, setTemplate] = useState('standard');
@@ -50,19 +52,42 @@ export function ExportScreen() {
 
     setConfirming(false);
     setRunning(true);
-    const languages: Language[] = language === 'both' ? ['ja', 'en'] : [language];
-    const stamp = new Date().toISOString().slice(0, 10);
+    const languages: Lang[] = language === 'both' ? ['ja', 'en'] : [language as Lang];
+    const generatedAt = new Date();
+    const stamp = generatedAt.toISOString().slice(0, 10);
+
     const created: ExportRecord[] = formats.flatMap((format) =>
       languages.map((code) => ({
         id: createId('exp'),
-        fileName: `${project.brand.replace(/\s+/g, '_')}_Proposal_${code.toUpperCase()}.${EXTENSION[format]}`,
+        fileName:
+          format === 'md'
+            ? markdownFileName(project, code)
+            : `${project.brand.replace(/\s+/g, '_')}_Proposal_${code.toUpperCase()}.${EXTENSION[format]}`,
         format,
         language: code,
         createdAt: stamp,
       })),
     );
 
-    // 実ファイル生成は Proposal Generator フェーズで接続する。ここでは履歴だけを進める。
+    // Markdown は実ファイルとして書き出す。他形式はサーバー側生成に接続するまで履歴のみ。
+    if (formats.includes('md') && workspace) {
+      for (const code of languages) {
+        downloadTextFile(
+          markdownFileName(project, code),
+          renderMarkdown({
+            project,
+            workspace,
+            portfolio,
+            assets,
+            settings,
+            lang: code,
+            generatedAt,
+          }),
+          'text/markdown',
+        );
+      }
+    }
+
     setTimeout(() => {
       recordExports(projectId, created);
       setRunning(false);
@@ -73,7 +98,7 @@ export function ExportScreen() {
     <>
       <PageHeader
         title="PDF／PowerPoint出力"
-        lead="選んだ形式と言語の組み合わせで、提案書をまとめて書き出します。"
+        lead="選んだ形式と言語の組み合わせで、提案書をまとめて書き出します。Markdown は実ファイルとしてダウンロードされます。"
       />
 
       <Card title="出力設定">
@@ -89,6 +114,7 @@ export function ExportScreen() {
                   onChange={() => toggleFormat(format)}
                 />
                 {EXPORT_FORMAT_LABEL[format]}
+                {format !== 'md' && <span className="muted">（履歴のみ）</span>}
               </label>
             ))}
           </div>

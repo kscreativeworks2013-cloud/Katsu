@@ -4,13 +4,16 @@
  * 注入で受け取り、既定はテストダブル。単体・コンポーネントテストとCIは常にテストダブルを使う。
  */
 
-import type { Project, StepId, Workspace } from '../data/types';
+import type { PortfolioWork, Project, Settings, StepId, Workspace } from '../data/types';
 
 export interface RunRequest {
   runId: string;
   stepId: StepId;
   project: Project;
   workspace: Workspace;
+  /** 案件に紐づかない全体入力（見積もり単価、引用元の作品）。 */
+  settings: Settings;
+  portfolio: PortfolioWork[];
 }
 
 export interface RunResult {

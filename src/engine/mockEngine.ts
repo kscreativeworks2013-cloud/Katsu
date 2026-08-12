@@ -12,6 +12,7 @@ import {
   generatePrompt,
   generateShots,
 } from '../data/generate';
+import { generateProposalBody } from '../data/proposalBody';
 import type { PromptTarget, StepId } from '../data/types';
 import { STEP_BY_ID } from '../domain/steps';
 import type { GenerationEngine, RunRequest, RunResult } from './types';
@@ -20,7 +21,7 @@ import type { GenerationEngine, RunRequest, RunResult } from './types';
 export const MOCK_LATENCY_MS = 400;
 
 function valuesFor(request: RunRequest): Record<string, unknown> {
-  const { project, workspace, stepId } = request;
+  const { project, workspace, stepId, settings, portfolio } = request;
 
   switch (stepId) {
     case 'brand': {
@@ -64,7 +65,13 @@ function valuesFor(request: RunRequest): Record<string, unknown> {
         ]),
       );
     }
-    // 提案書と出力は既存の生成物から組み立てるだけで、自身の出力フィールドを持たない。
+    case 'proposal': {
+      const body = generateProposalBody(project, workspace, portfolio, settings);
+      return Object.fromEntries(
+        Object.entries(body).map(([sectionId, value]) => [`proposal.body.${sectionId}`, value]),
+      );
+    }
+    // 出力ステップは既存の生成物を書き出すだけで、自身の出力フィールドを持たない。
     default:
       return {};
   }

@@ -208,6 +208,12 @@ export interface Shot {
   assetId?: string | null;
 }
 
+/** 章本文。日英を同一の構成データから導出する（第5章 5-2）。 */
+export interface ProposalBody {
+  ja: string[];
+  en: string[];
+}
+
 export interface ExportRecord {
   id: string;
   fileName: string;
@@ -229,6 +235,11 @@ export interface Workspace {
   moodboard: MoodTile[];
   shots: Shot[];
   prompts: Partial<Record<PromptTarget, string>>;
+  /**
+   * 章IDをキーにした提案書本文。生成物なので provenance の管理下に置き、
+   * 章単位で手動編集・保護できる。旧スキーマの保存状態には無いため任意。
+   */
+  proposalBody?: Partial<Record<string, ProposalBody>>;
   exports: ExportRecord[];
 }
 

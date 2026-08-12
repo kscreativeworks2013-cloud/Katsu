@@ -4,7 +4,8 @@
  * すべてパス単位で行う。コレクションはコレクション全体で1フィールドとして扱う。
  */
 
-import type { Workspace } from '../data/types';
+import type { ProposalBody, Workspace } from '../data/types';
+import { PROPOSAL_TEMPLATE } from './proposal';
 
 export interface FieldAccessor {
   path: string;
@@ -84,6 +85,19 @@ const ACCESSORS: FieldAccessor[] = [
     'ショットリスト',
     (workspace) => workspace.shots,
     (workspace, value) => ({ ...workspace, shots: value }),
+  ),
+
+  // 章本文は章ごとに1フィールド。章単位で手動編集・保護できるようにする（第5章 5-2）。
+  ...PROPOSAL_TEMPLATE.map((section) =>
+    field(
+      `proposal.body.${section.id}`,
+      `提案書：${section.ja}`,
+      (workspace: Workspace) => workspace.proposalBody?.[section.id],
+      (workspace: Workspace, value: ProposalBody | undefined) => ({
+        ...workspace,
+        proposalBody: { ...workspace.proposalBody, [section.id]: value },
+      }),
+    ),
   ),
 
   ...(['chatgpt', 'claude', 'gemini', 'imagefx', 'midjourney', 'flux'] as const).map((target) =>

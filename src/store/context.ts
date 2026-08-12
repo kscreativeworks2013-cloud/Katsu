@@ -68,6 +68,7 @@ export interface AppStore {
 
   registerAsset: (asset: Omit<Asset, 'id' | 'createdAt'>) => Asset;
   addPortfolioWork: (work: Omit<PortfolioWork, 'id'>) => void;
+  updatePortfolioWork: (workId: string, patch: Partial<PortfolioWork>) => void;
   removePortfolioWork: (workId: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
 }

@@ -5,7 +5,14 @@
  * この配列を変えるだけで画面に反映される（第4章 4-8）。
  */
 
-import type { Project, StepId, Workspace } from '../data/types';
+import type { PortfolioWork, Project, Settings, StepId, Workspace } from '../data/types';
+import { PROPOSAL_TEMPLATE } from './proposal';
+
+/** 案件に紐づかない全体入力。見積もり単価や引用元の作品はここから渡す。 */
+export interface RunContext {
+  settings: Settings;
+  portfolio: PortfolioWork[];
+}
 
 export interface StepContract {
   id: StepId;
@@ -13,8 +20,8 @@ export interface StepContract {
   segment: string;
   dependsOn: StepId[];
   outputFields: string[];
-  /** 生成に使う入力。案件情報と上流の出力だけを参照する。 */
-  inputs: (project: Project, workspace: Workspace) => unknown;
+  /** 生成に使う入力。案件情報・上流の出力・全体設定だけを参照する。 */
+  inputs: (project: Project, workspace: Workspace, context: RunContext) => unknown;
 }
 
 const PROMPT_FIELDS = [
@@ -122,15 +129,20 @@ export const WORKFLOW_STEPS: StepContract[] = [
     label: '提案書プレビュー',
     segment: 'proposal',
     dependsOn: ['brand', 'competitors', 'concepts', 'moodboard', 'shots'],
-    // 提案書は各ステップの出力から都度組み立てるため、自身の出力フィールドを持たない。
-    outputFields: [],
-    inputs: (project, workspace) => ({
+    // 章本文は章ごとに1フィールド。日英は同じフィールドに同居する（第5章 5-2）。
+    outputFields: PROPOSAL_TEMPLATE.map((section) => `proposal.body.${section.id}`),
+    inputs: (project, workspace, context) => ({
       language: project.language,
       brand: workspace.brand,
       competitors: workspace.competitors,
+      differentiators: workspace.differentiators,
       concept: adoptedConcept(workspace),
       moodboard: workspace.moodboard,
       shots: workspace.shots,
+      production: project.production,
+      // 見積もり章は単価に依存するので、単価の変更も入力の変化として扱う。
+      rates: context.settings.rates,
+      works: context.portfolio.slice(0, 3).map((work) => work.id),
     }),
   },
   {
@@ -139,7 +151,11 @@ export const WORKFLOW_STEPS: StepContract[] = [
     segment: 'export',
     dependsOn: ['proposal'],
     outputFields: [],
-    inputs: (project) => ({ outputs: project.outputs, language: project.language }),
+    inputs: (project, workspace) => ({
+      outputs: project.outputs,
+      language: project.language,
+      body: workspace.proposalBody,
+    }),
   },
 ];
 
@@ -172,8 +188,13 @@ export function downstreamSteps(stepId: StepId): StepId[] {
 }
 
 /** 入力の要約値。順序に依存しないよう、キーをソートしてから畳み込む。 */
-export function inputsHash(stepId: StepId, project: Project, workspace: Workspace): string {
-  const inputs = STEP_BY_ID[stepId].inputs(project, workspace);
+export function inputsHash(
+  stepId: StepId,
+  project: Project,
+  workspace: Workspace,
+  context: RunContext,
+): string {
+  const inputs = STEP_BY_ID[stepId].inputs(project, workspace, context);
   const json = JSON.stringify(inputs, (_key, value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       return Object.fromEntries(
