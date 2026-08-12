@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { ProposalBody } from '../data/types';
 import { ASSET_ORIGIN_LABEL } from '../domain/assets';
@@ -7,6 +7,7 @@ import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/
 import { isProtected } from '../domain/provenance';
 import { staleStepLabels } from '../lib/projects';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
+import { AssetImage } from '../ui/AssetImage';
 import { Card, PageHeader } from '../ui/primitives';
 
 /** 未生成の章から、生成しに行くべきステップへの導線。 */
@@ -91,27 +92,11 @@ function SectionSlots({
             <div className="grid grid--4" style={{ marginTop: 6 }}>
               {images.map((image) => (
                 <figure className="tile" key={image.key} style={{ margin: 0 }}>
-                  {image.asset?.thumbnail ? (
-                    <img
-                      className="tile-art"
-                      src={image.asset.thumbnail}
-                      alt={image.caption}
-                      style={{ objectFit: 'cover', width: '100%' }}
-                    />
-                  ) : (
-                    <div
-                      className="tile-art"
-                      style={
-                        image.fallback
-                          ? ({
-                              '--from': image.fallback.from,
-                              '--to': image.fallback.to,
-                            } as CSSProperties)
-                          : undefined
-                      }
-                      aria-hidden="true"
-                    />
-                  )}
+                  <AssetImage
+                    asset={image.asset}
+                    alt={image.caption}
+                    fallback={image.fallback}
+                  />
                   <figcaption className="tile-body">
                     <p>{image.caption}</p>
                     {image.asset && (

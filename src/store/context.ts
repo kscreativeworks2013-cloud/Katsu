@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type {
   Asset,
   ExportRecord,
@@ -10,7 +10,11 @@ import type {
   StepId,
   Workspace,
 } from '../data/types';
+import { pickVariant, type AssetUsage } from '../domain/assets';
+import type { AssetBinaryStore } from '../domain/assetStore';
 import type { FieldDiff } from '../domain/run';
+import type { PersistState } from '../lib/storagePersistence';
+import type { ImageCache } from './imageCache';
 import type { SaveOutcome } from './persistence';
 
 /** 新規案件フォームが渡す値。未入力の項目は既定値で埋める。 */
@@ -37,6 +41,27 @@ export interface PendingRun {
 
 export function runKey(projectId: string, stepId: StepId): string {
   return `${projectId}:${stepId}`;
+}
+
+/** 画像の実体まわりの状態（第7章 7-10／7-11／7-12）。消えたことを黙らせないための情報。 */
+export interface AssetStorageState {
+  usage: AssetUsage;
+  /** 永続化の状態。granted 以外は消えうることを画面で伝える。 */
+  persist: PersistState;
+  /** 記述子はあるのに実体が取れないアセット。 */
+  missingAssetIds: string[];
+  /** IndexedDB が使えず、リロードで消える状態か。 */
+  ephemeral: boolean;
+  /** v2 からの移行結果。移った件数と、移せずに失われた件数。 */
+  migration?: { moved: number; failed: number };
+}
+
+/** 実体つきでアセットを登録するときの入力（第7章 7-6）。 */
+export interface AssetBinaryInput {
+  blob: Blob;
+  width: number;
+  height: number;
+  mimeType: string;
 }
 
 export interface AppStore {
@@ -69,11 +94,27 @@ export interface AppStore {
   setAdoptedConcept: (projectId: string, conceptId: string) => void;
   recordExports: (projectId: string, records: ExportRecord[]) => void;
 
-  /** 登録結果。rejected があれば、その理由を必ず画面に出すこと（第6章 6-9）。 */
-  registerAsset: (asset: Omit<Asset, 'id' | 'createdAt'>) => {
-    asset: Asset;
-    rejected?: string;
-  };
+  /** 画像の実体まわりの状態（第7章）。 */
+  assetStorage: AssetStorageState;
+  /** 解決フェーズ（出力）で実体を取り出すためのストア。 */
+  binaryStore: AssetBinaryStore;
+  imageCache: ImageCache;
+
+  /**
+   * アセットを登録する。実体（原寸）を渡すと保存し、preview を作って添える。
+   * 保存できなかった場合は rejected に理由が入る。必ず画面に出すこと（第7章 7-10）。
+   */
+  registerAsset: (
+    asset: Omit<Asset, 'id' | 'createdAt' | 'variants'>,
+    binary?: AssetBinaryInput,
+  ) => Promise<{ asset: Asset; rejected?: string }>;
+  /** 既存アセットに原寸を貼り直す（消失からの復旧導線。第7章 7-11）。 */
+  replaceAssetBinary: (
+    assetId: string,
+    binary: AssetBinaryInput,
+  ) => Promise<{ rejected?: string }>;
+  /** アセットを削除する。実体（原寸・preview）もまとめて消す。 */
+  removeAsset: (assetId: string) => void;
   addPortfolioWork: (work: Omit<PortfolioWork, 'id'>) => void;
   updatePortfolioWork: (workId: string, patch: Partial<PortfolioWork>) => void;
   removePortfolioWork: (workId: string) => void;
@@ -101,6 +142,38 @@ export function useProject(projectId: string | undefined): {
     workspace: workspaces[projectId],
     provenance: provenance[projectId] ?? {},
   };
+}
+
+/**
+ * 画面表示用の画像URL（第7章 7-7）。
+ * preview を優先し、無ければ原寸を使う。取れない場合は undefined を返し、
+ * 呼び出し側はプレースホルダに落とす（消失の表示は assetStorage.missingAssetIds が担う）。
+ */
+export function useAssetImage(asset: Asset | undefined): string | undefined {
+  const { imageCache } = useAppStore();
+  const variant = pickVariant(asset, 'screen');
+  const key = variant?.key;
+  // キーと一緒に持つ。参照が変わった直後に前の画像を出さないため。
+  const [loaded, setLoaded] = useState<{ key: string; url: string } | null>(null);
+
+  useEffect(() => {
+    if (!key) return;
+    let active = true;
+    let retained = false;
+    void imageCache.load(key).then((url) => {
+      if (!active || !url) return;
+      imageCache.retain(key);
+      retained = true;
+      setLoaded({ key, url });
+    });
+    return () => {
+      active = false;
+      // 掴んだ分だけ返す。掴めていないものを release すると他の表示を巻き添えにする。
+      if (retained) imageCache.release(key);
+    };
+  }, [imageCache, key]);
+
+  return loaded && loaded.key === key ? loaded.url : undefined;
 }
 
 /** 指定ステップの実行中〜確認待ちの Run。無ければ undefined。 */

@@ -9,6 +9,7 @@ import {
 import { emptyWorkspace } from '../data/generate';
 import type {
   Asset,
+  AssetVariant,
   ExportRecord,
   PortfolioWork,
   Project,
@@ -19,7 +20,12 @@ import type {
   StepRecord,
   Workspace,
 } from '../data/types';
-import { decideThumbnail } from '../domain/assets';
+import { assetUsage, detectMissingAssets } from '../domain/assets';
+import { createIndexedDbStore } from '../lib/indexedDbStore';
+import { variantKey, type AssetBinaryStore } from '../domain/assetStore';
+import { dataUriToBlob, makePreview, measureImage } from '../lib/imageProcessing';
+import { requestPersistentStorage, type PersistState } from '../lib/storagePersistence';
+import { createImageCache } from './imageCache';
 import { readField, sameValue, writeField } from '../domain/fields';
 import { acknowledgeStaleRecord, markEdited } from '../domain/provenance';
 import { applyValues, buildDiff, defaultSelection } from '../domain/run';
@@ -31,6 +37,7 @@ import {
   AppStoreContext,
   runKey,
   type AppStore,
+  type AssetBinaryInput,
   type NewProjectInput,
   type PendingRun,
 } from './context';
@@ -82,12 +89,16 @@ function ownerStep(path: string): StepId | undefined {
 export function AppStoreProvider({
   children,
   engine = mockEngine,
+  binaryStore,
 }: {
   children: ReactNode;
   /** 既定はテストダブル。実モデルはここに差し替える（第4章 4-6）。 */
   engine?: GenerationEngine;
+  /** 既定は IndexedDB 実装。サーバー実装は同じ契約で差し替える（第7章 7-4）。 */
+  binaryStore?: AssetBinaryStore & { persistent?: boolean };
 }) {
-  const persisted = useMemo(() => loadState(), []);
+  const loaded = useMemo(() => loadState(), []);
+  const persisted = loaded?.state;
   const [projects, setProjects] = useState<Project[]>(persisted?.projects ?? seedProjects);
   const [workspaces, setWorkspaces] = useState<Record<string, Workspace>>(
     persisted?.workspaces ?? seedWorkspaces,
@@ -105,10 +116,48 @@ export function AppStoreProvider({
   const [saveOutcome, setSaveOutcome] = useState<SaveOutcome>({ status: 'saved' });
   const reportedStatus = useRef<SaveOutcome['status']>('saved');
 
+  // 画像の実体まわり（第7章）。メタデータは上の assets、実体はこのストアに置く。
+  const store = useMemo(() => binaryStore ?? createIndexedDbStore(), [binaryStore]);
+  const [missingAssetIds, setMissingAssetIds] = useState<string[]>([]);
+  const [persistState, setPersistState] = useState<PersistState>('unsupported');
+  const [quotaBytes, setQuotaBytes] = useState<number | undefined>(undefined);
+  const [migration, setMigration] = useState<{ moved: number; failed: number } | undefined>(
+    undefined,
+  );
+
+  const markMissingKey = useCallback((key: string) => {
+    // キーは `${assetId}:${kind}`。実体が取れないことが消失の観測点（第7章 7-11）。
+    const assetId = key.slice(0, key.lastIndexOf(':'));
+    setMissingAssetIds((current) =>
+      current.includes(assetId) ? current : [...current, assetId],
+    );
+  }, []);
+
+  const imageCache = useMemo(
+    () => createImageCache(store, markMissingKey),
+    [markMissingKey, store],
+  );
+
   // 生成完了時に最新の状態で差分を取るための参照。レンダー中には触らない。
-  const latest = useRef({ projects, workspaces, provenance, pendingRuns, settings, portfolio });
+  const latest = useRef({
+    projects,
+    workspaces,
+    provenance,
+    pendingRuns,
+    settings,
+    portfolio,
+    assets,
+  });
   useEffect(() => {
-    latest.current = { projects, workspaces, provenance, pendingRuns, settings, portfolio };
+    latest.current = {
+      projects,
+      workspaces,
+      provenance,
+      pendingRuns,
+      settings,
+      portfolio,
+      assets,
+    };
   });
 
   useEffect(() => {
@@ -129,6 +178,72 @@ export function AppStoreProvider({
       queueMicrotask(() => setSaveOutcome(outcome));
     }
   }, [projects, workspaces, provenance, runs, assets, portfolio, settings]);
+
+  const refreshUsage = useCallback(() => {
+    void store.usage().then((usage) => setQuotaBytes(usage.quotaBytes));
+  }, [store]);
+
+  /**
+   * 起動時の3点（第7章 7-11／7-12）。
+   * 1) 永続化を要求する 2) v2 のサムネイルを実体ストアへ移す 3) メタデータと実体を突き合わせる。
+   * どれも結果を状態に残し、画面で伝える。黙って消さない。
+   */
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const persist = await requestPersistentStorage();
+      if (!active) return;
+      setPersistState(persist);
+
+      const legacy = loaded?.legacyThumbnails ?? {};
+      const migrated: Record<string, AssetVariant> = {};
+      let failed = 0;
+
+      for (const [assetId, dataUri] of Object.entries(legacy)) {
+        const blob = dataUriToBlob(dataUri);
+        // 既存サムネイルは preview 規格（長辺800px・JPEG）と一致するので作り直さない。
+        const key = variantKey(assetId, 'preview');
+        const result = blob ? await store.put(key, blob) : { ok: false as const, reason: '' };
+        if (!blob || !result.ok) {
+          failed += 1;
+          continue;
+        }
+        const size = await measureImage(blob);
+        migrated[assetId] = {
+          kind: 'preview',
+          key,
+          width: size?.width ?? 0,
+          height: size?.height ?? 0,
+          bytes: blob.size,
+          mimeType: blob.type || 'image/jpeg',
+        };
+      }
+
+      if (!active) return;
+
+      const moved = Object.keys(migrated).length;
+      const withVariants: Record<string, Asset> = Object.fromEntries(
+        Object.entries(persisted?.assets ?? {}).map(([id, asset]) => [
+          id,
+          migrated[id] ? { ...asset, variants: [migrated[id]] } : asset,
+        ]),
+      );
+      if (moved > 0) setAssets(withVariants);
+      if (moved > 0 || failed > 0) setMigration({ moved, failed });
+
+      // メタデータと実体の突き合わせ。記述子があるのに実体が無いものが消失。
+      const keys = await store.list();
+      if (!active) return;
+      setMissingAssetIds(detectMissingAssets(withVariants, keys));
+      refreshUsage();
+    })();
+
+    return () => {
+      active = false;
+    };
+    // 起動時に一度だけ。loaded は useMemo で固定されている。
+  }, [loaded, persisted, refreshUsage, store]);
 
   const patchSteps = useCallback(
     (
@@ -529,20 +644,124 @@ export function AppStoreProvider({
     [patchSteps],
   );
 
+  /**
+   * 実体を保存し、variant の記述子を作る（第7章 7-6）。
+   * 原寸を保存し、続けて preview を作る。preview の生成に失敗しても原寸は残す。
+   */
+  const storeBinaries = useCallback(
+    async (assetId: string, binary: AssetBinaryInput) => {
+      const originalKey = variantKey(assetId, 'original');
+      const stored = await store.put(originalKey, binary.blob);
+      if (!stored.ok) return { variants: [] as AssetVariant[], rejected: stored.reason };
+
+      const variants: AssetVariant[] = [
+        {
+          kind: 'original',
+          key: originalKey,
+          width: binary.width,
+          height: binary.height,
+          bytes: binary.blob.size,
+          mimeType: binary.mimeType,
+        },
+      ];
+
+      const preview = await makePreview(binary.blob);
+      if (preview) {
+        const previewKey = variantKey(assetId, 'preview');
+        const savedPreview = await store.put(previewKey, preview.blob);
+        if (savedPreview.ok) {
+          variants.push({
+            kind: 'preview',
+            key: previewKey,
+            width: preview.width,
+            height: preview.height,
+            bytes: preview.blob.size,
+            mimeType: preview.mimeType,
+          });
+        }
+      }
+
+      return { variants, rejected: undefined };
+    },
+    [store],
+  );
+
   const registerAsset = useCallback(
-    (input: Omit<Asset, 'id' | 'createdAt'>) => {
-      // 収まらない場合は理由を返し、呼び出し側が必ず利用者に見せる（第6章 6-9）。
-      const decision = decideThumbnail(assets, input.thumbnail);
+    async (input: Omit<Asset, 'id' | 'createdAt' | 'variants'>, binary?: AssetBinaryInput) => {
+      const id = createId('ast');
+      // 保存できなかった場合は理由を返し、呼び出し側が必ず利用者に見せる（第7章 7-10）。
+      const outcome = binary
+        ? await storeBinaries(id, binary)
+        : { variants: [] as AssetVariant[], rejected: undefined };
+
       const asset: Asset = {
         ...input,
-        thumbnail: decision.thumbnail,
-        id: createId('ast'),
+        id,
         createdAt: nowIso(),
+        variants: outcome.variants,
       };
       setAssets((current) => ({ ...current, [asset.id]: asset }));
-      return { asset, rejected: decision.rejected };
+      refreshUsage();
+      return { asset, rejected: outcome.rejected };
     },
-    [assets],
+    [refreshUsage, storeBinaries],
+  );
+
+  /** 消失したアセットに原寸を貼り直す（第7章 7-11 の再登録導線）。参照は保持したまま復旧する。 */
+  const replaceAssetBinary = useCallback(
+    async (assetId: string, binary: AssetBinaryInput) => {
+      const outcome = await storeBinaries(assetId, binary);
+      if (outcome.rejected) return { rejected: outcome.rejected };
+
+      for (const variant of outcome.variants) imageCache.forget(variant.key);
+      setAssets((current) => {
+        const asset = current[assetId];
+        if (!asset) return current;
+        return { ...current, [assetId]: { ...asset, variants: outcome.variants } };
+      });
+      setMissingAssetIds((current) => current.filter((id) => id !== assetId));
+      refreshUsage();
+      return {};
+    },
+    [imageCache, refreshUsage, storeBinaries],
+  );
+
+  const removeAsset = useCallback(
+    (assetId: string) => {
+      const asset = latest.current.assets[assetId];
+      for (const variant of asset?.variants ?? []) {
+        imageCache.forget(variant.key);
+        void store.delete(variant.key);
+      }
+      setAssets((current) => {
+        const next = { ...current };
+        delete next[assetId];
+        return next;
+      });
+      // 参照している側からも外す。参照だけが残ると、解決できない assetId が漂う（第7章 7-6）。
+      setWorkspaces((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([projectId, workspace]) => [
+            projectId,
+            {
+              ...workspace,
+              moodboard: workspace.moodboard.map((tile) =>
+                tile.assetId === assetId ? { ...tile, assetId: null } : tile,
+              ),
+              shots: workspace.shots.map((shot) =>
+                shot.assetId === assetId ? { ...shot, assetId: null } : shot,
+              ),
+            },
+          ]),
+        ),
+      );
+      setPortfolio((current) =>
+        current.map((work) => (work.assetId === assetId ? { ...work, assetId: null } : work)),
+      );
+      setMissingAssetIds((current) => current.filter((id) => id !== assetId));
+      refreshUsage();
+    },
+    [imageCache, refreshUsage, store],
   );
 
   const addPortfolioWork = useCallback((work: Omit<PortfolioWork, 'id'>) => {
@@ -562,6 +781,18 @@ export function AppStoreProvider({
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((current) => ({ ...current, ...patch }));
   }, []);
+
+  const assetStorage = useMemo(
+    () => ({
+      usage: assetUsage(assets, missingAssetIds, quotaBytes),
+      persist: persistState,
+      missingAssetIds,
+      // IndexedDB が使えない環境ではメモリ実装に落ちており、リロードで消える。
+      ephemeral: store.persistent === false,
+      migration,
+    }),
+    [assets, migration, missingAssetIds, persistState, quotaBytes, store],
+  );
 
   const value = useMemo<AppStore>(
     () => ({
@@ -584,7 +815,12 @@ export function AppStoreProvider({
       editField,
       setAdoptedConcept,
       recordExports,
+      assetStorage,
+      binaryStore: store,
+      imageCache,
       registerAsset,
+      replaceAssetBinary,
+      removeAsset,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,
@@ -610,7 +846,12 @@ export function AppStoreProvider({
       editField,
       setAdoptedConcept,
       recordExports,
+      assetStorage,
+      store,
+      imageCache,
       registerAsset,
+      replaceAssetBinary,
+      removeAsset,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,

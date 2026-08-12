@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Asset, Provenance } from '../data/types';
-import { buildTestIR, TINY_PNG, testProject, workspaceWithBody } from '../test/ir';
+import type { Provenance } from '../data/types';
+import {
+  buildTestIR,
+  testAsset,
+  testProject,
+  workspaceWithAsset,
+  workspaceWithBody,
+} from '../test/ir';
 import { blockingWarnings, computeRevision, IR_VERSION } from './ir';
 
 // Pattern: unit tests. IR は全出力形式の唯一の入力なので、ここで形を固める。
@@ -45,27 +51,9 @@ describe('buildProposalIR', () => {
   });
 
   it('はAI生成画像を含むことを記録する', () => {
-    const assets: Record<string, Asset> = {
-      'ast-ai': {
-        id: 'ast-ai',
-        origin: 'ai',
-        label: 'キービジュアル',
-        source: 'quiet light',
-        runId: 'run-9',
-        mimeType: 'image/png',
-        createdAt: '',
-        thumbnail: TINY_PNG,
-      },
-    };
-    const base = workspaceWithBody();
     const ir = buildTestIR({
-      assets,
-      workspace: {
-        ...base,
-        moodboard: base.moodboard.map((tile, index) =>
-          index === 0 ? { ...tile, assetId: 'ast-ai' } : tile,
-        ),
-      },
+      assets: { 'ast-ai': testAsset('ast-ai', { origin: 'ai' }) },
+      workspace: workspaceWithAsset('ast-ai'),
     });
 
     expect(ir.sources.hasAiImage).toBe(true);
@@ -150,26 +138,9 @@ describe('警告', () => {
   });
 
   it('は外部URL画像を埋め込まないことを知らせる', () => {
-    const assets: Record<string, Asset> = {
-      'ast-ext': {
-        id: 'ast-ext',
-        origin: 'external',
-        label: '参考画像',
-        source: 'https://example.com/a.jpg',
-        runId: null,
-        mimeType: 'image/jpeg',
-        createdAt: '',
-      },
-    };
-    const base = workspaceWithBody();
     const ir = buildTestIR({
-      assets,
-      workspace: {
-        ...base,
-        moodboard: base.moodboard.map((tile, index) =>
-          index === 0 ? { ...tile, assetId: 'ast-ext' } : tile,
-        ),
-      },
+      assets: { 'ast-ext': testAsset('ast-ext', { origin: 'external', variants: [] }) },
+      workspace: workspaceWithAsset('ast-ext'),
     });
 
     expect(ir.warnings.some((warning) => warning.kind === 'external-image')).toBe(true);
@@ -177,47 +148,88 @@ describe('警告', () => {
 });
 
 describe('外部URL画像の取り込み', () => {
-  const external = (thumbnail?: string): Record<string, Asset> => ({
-    'ast-ext': {
-      id: 'ast-ext',
-      origin: 'external',
-      label: '参考画像',
-      source: 'https://example.com/a.jpg',
-      runId: null,
-      mimeType: 'image/jpeg',
-      createdAt: '',
-      ...(thumbnail ? { thumbnail } : {}),
-    },
-  });
-
-  function irWithExternal(thumbnail?: string) {
-    const base = workspaceWithBody();
+  function irWithExternal(imported: boolean) {
     return buildTestIR({
-      assets: external(thumbnail),
-      workspace: {
-        ...base,
-        moodboard: base.moodboard.map((tile, index) =>
-          index === 0 ? { ...tile, assetId: 'ast-ext' } : tile,
-        ),
+      assets: {
+        'ast-ext': testAsset('ast-ext', {
+          origin: 'external',
+          ...(imported ? {} : { variants: [] }),
+        }),
       },
+      workspace: workspaceWithAsset('ast-ext'),
     });
   }
 
-  it('は取り込み済みなら埋め込める実体を持ち、警告しない', () => {
-    const ir = irWithExternal(TINY_PNG);
+  it('は取り込み済みなら出力用の実体を指し、警告しない', () => {
+    const ir = irWithExternal(true);
     const image = ir.sections
       .flatMap((section) => section.blocks)
       .find((block) => block.type === 'image' && block.assetOrigin === 'external');
 
-    expect(image).toMatchObject({ data: TINY_PNG, href: 'https://example.com/a.jpg' });
+    expect(image).toMatchObject({
+      href: 'https://example.com/a.jpg',
+      variant: { kind: 'original', key: 'ast-ext:original' },
+    });
     expect(ir.warnings.some((warning) => warning.kind === 'external-image')).toBe(false);
   });
 
   it('は取り込めていない場合だけ成果物に含まれないと知らせる', () => {
-    const ir = irWithExternal();
+    const ir = irWithExternal(false);
 
     expect(ir.warnings.find((warning) => warning.kind === 'external-image')?.message).toMatch(
       /取り込めていないため/,
     );
+  });
+});
+
+describe('画像の解像度と実体（第7章 7-2／7-6）', () => {
+  it('は配置幅に対して画素が足りない画像を、必要px付きで警告する', () => {
+    // 表紙キービジュアル（210mm）には 1654px 必要。1024px では届かない。
+    const ir = buildTestIR({
+      assets: { 'ast-small': testAsset('ast-small', { width: 1024, height: 768 }) },
+      workspace: workspaceWithAsset('ast-small'),
+    });
+
+    const warning = ir.warnings.find((item) => item.kind === 'low-resolution');
+    expect(warning?.severity).toBe('warn');
+    expect(warning?.message).toMatch(/124ppi/);
+    expect(warning?.message).toMatch(/1654px 必要/);
+  });
+
+  it('は原寸のない画像を「出力では欠ける」と警告する', () => {
+    const previewOnly = testAsset('ast-prev', {
+      variants: [
+        {
+          kind: 'preview',
+          key: 'ast-prev:preview',
+          width: 800,
+          height: 600,
+          bytes: 60_000,
+          mimeType: 'image/jpeg',
+        },
+      ],
+    });
+    const ir = buildTestIR({
+      assets: { 'ast-prev': previewOnly },
+      workspace: workspaceWithAsset('ast-prev'),
+    });
+
+    const warning = ir.warnings.find((item) => item.kind === 'preview-only');
+    expect(warning?.severity).toBe('warn');
+    // 出力用の実体は指さない（preview を出力に使わない）。
+    const image = ir.sections
+      .flatMap((section) => section.blocks)
+      .find((block) => block.type === 'image' && block.assetId === 'ast-prev');
+    expect(image).toMatchObject({ variant: undefined });
+  });
+
+  it('は十分な解像度の画像には警告を出さない', () => {
+    const ir = buildTestIR({
+      assets: { 'ast-big': testAsset('ast-big', { width: 3000, height: 2000 }) },
+      workspace: workspaceWithAsset('ast-big'),
+    });
+
+    expect(ir.warnings.some((item) => item.kind === 'low-resolution')).toBe(false);
+    expect(ir.warnings.some((item) => item.kind === 'preview-only')).toBe(false);
   });
 });

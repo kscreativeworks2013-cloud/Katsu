@@ -1,5 +1,4 @@
 import { Link, Outlet, useLocation, useMatch } from 'react-router-dom';
-import { storageUsage } from '../domain/assets';
 import { WORKFLOW_STEPS } from '../domain/steps';
 import { useAppStore } from '../store/context';
 import { Sidebar } from './Sidebar';
@@ -35,8 +34,7 @@ function useCrumbs(): string[] {
  */
 export function AppShell() {
   const crumbs = useCrumbs();
-  const { projects, assets, saveOutcome } = useAppStore();
-  const usage = storageUsage(assets);
+  const { projects, saveOutcome, assetStorage } = useAppStore();
   const match = useMatch('/projects/:projectId/*');
   const project = projects.find((item) => item.id === match?.params.projectId);
 
@@ -62,16 +60,29 @@ export function AppShell() {
         </header>
         <main className="content">
           {/* 保存できていない状態を黙って続けない（第6章 6-9）。 */}
-          {(saveOutcome.status === 'degraded' || saveOutcome.status === 'failed') && (
+          {saveOutcome.status === 'failed' && (
             <p className="form-error" role="alert">
               {saveOutcome.message}
             </p>
           )}
-          {saveOutcome.status !== 'failed' && usage.level !== 'ok' && (
+          {/* 画像が失われた／消えうる状態も同じく黙らせない（第7章 7-11）。 */}
+          {assetStorage.missingAssetIds.length > 0 && (
+            <p className="form-error" role="alert">
+              画像 {assetStorage.missingAssetIds.length}
+              件がブラウザの保存領域から失われています。出力には含まれません。
+              <Link to="/settings">設定</Link>で対象を確認し、原寸を登録し直してください。
+            </p>
+          )}
+          {assetStorage.migration && assetStorage.migration.failed > 0 && (
+            <p className="form-error" role="alert">
+              以前の形式で保存されていた画像 {assetStorage.migration.failed}
+              件を移行できませんでした。該当の画像は登録し直してください。
+            </p>
+          )}
+          {/* 永続化の状態そのものは設定画面に常時出す。ここは「使えない」ときだけ出す。 */}
+          {assetStorage.ephemeral && (
             <p className="form-error" role="status">
-              {usage.level === 'full'
-                ? '画像の保存容量がいっぱいです。新しい画像は保存できません。不要な画像を解除してください。'
-                : `画像の保存容量が残りわずかです（${Math.round(usage.ratio * 100)}% 使用）。`}
+              この環境ではブラウザの画像保存が使えません。登録した画像はリロードで失われます。
             </p>
           )}
           <Outlet />

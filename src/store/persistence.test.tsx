@@ -42,8 +42,8 @@ describe('永続化', () => {
     await user.type(screen.getByLabelText('トーン＆マナー'), '追記');
 
     const saved = loadState();
-    expect(saved?.version).toBe(2);
-    expect(saved?.provenance['prj-maison']['brand.tone'].origin).toBe('edited');
+    expect(saved?.state.version).toBe(3);
+    expect(saved?.state.provenance['prj-maison']['brand.tone'].origin).toBe('edited');
   });
 });
 
@@ -62,7 +62,7 @@ describe('stale の確認済みの永続化', () => {
     }
 
     const saved = loadState();
-    const competitors = saved?.projects.find((item) => item.id === 'prj-maison')?.steps
+    const competitors = saved?.state.projects.find((item) => item.id === 'prj-maison')?.steps
       .competitors;
     expect(competitors?.stale).toBe(false);
     expect(competitors?.staleAcknowledgedAt).toBeTruthy();

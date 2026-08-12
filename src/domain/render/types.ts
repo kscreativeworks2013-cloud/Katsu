@@ -32,10 +32,25 @@ export function assertIrVersion(renderer: Renderer, ir: ProposalIR): void {
   }
 }
 
-/** 出力ファイル名。ブランド名の空白は落とし、版が追えるよう revision を付ける。 */
-export function fileNameFor(ir: ProposalIR, extension: string): string {
+/**
+ * 出力ファイル名。ブランド名の空白は落とし、版が追えるよう revision を付ける。
+ * 原寸で解決できなかった出力には -draft を付ける（第7章 7-9）。同じ版・同じ形式で
+ * 中身の違うファイルが同名で並ぶと、提出時に取り違えるため。
+ */
+export function fileNameFor(ir: ProposalIR, extension: string, draft = false): string {
   const brand = ir.project.brand.replace(/\s+/g, '_');
-  return `${brand}_Proposal_${ir.lang.toUpperCase()}_${ir.revision}.${extension}`;
+  const suffix = draft ? '-draft' : '';
+  return `${brand}_Proposal_${ir.lang.toUpperCase()}_${ir.revision}${suffix}.${extension}`;
+}
+
+/**
+ * 原寸で解決できなかった出力か（第7章 7-9）。
+ * 判定は IR の警告だけから行う。レンダラは IR 以外を読まない。
+ */
+export function isDraft(ir: ProposalIR): boolean {
+  return ir.warnings.some(
+    (warning) => warning.kind === 'missing-binary' || warning.kind === 'preview-only',
+  );
 }
 
 /** 出力物の冒頭に載せる警告の要約（第6章 6-4）。 */

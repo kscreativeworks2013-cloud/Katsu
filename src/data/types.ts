@@ -66,6 +66,23 @@ export interface StepRecord {
 /** 画像アセットの出自（第5章 5-1）。AI生成か持ち込みかはアセット自身が持つ。 */
 export type AssetOrigin = 'upload' | 'external' | 'ai';
 
+/** 実体の種類（第7章 7-5）。original が主で、preview はそこから作る派生物。 */
+export type VariantKind = 'original' | 'preview';
+
+/**
+ * 実体の記述子。実体そのもの（Blob）は AssetBinaryStore にあり、
+ * localStorage にはこの記述子だけが載る（第7章 7-4）。
+ */
+export interface AssetVariant {
+  kind: VariantKind;
+  /** AssetBinaryStore のキー。 */
+  key: string;
+  width: number;
+  height: number;
+  bytes: number;
+  mimeType: string;
+}
+
 export interface Asset {
   id: string;
   origin: AssetOrigin;
@@ -77,10 +94,10 @@ export interface Asset {
   mimeType: string;
   createdAt: string;
   /**
-   * プレビュー用サムネイル（data URI）。容量退避で失われることがあるが、
-   * メタデータと参照（assetId）は失わない（第5章 5-1）。
+   * 実体の記述子（第7章 7-4）。original・preview はそれぞれ0個または1個。
+   * 記述子があるのに実体が取れない場合は消失（第7章 7-11）として扱う。
    */
-  thumbnail?: string;
+  variants: AssetVariant[];
 }
 
 export type ProjectStatus = 'draft' | 'in_progress' | 'review' | 'delivered';
@@ -224,6 +241,18 @@ export interface ExportRecord {
   irRevision?: string;
   /** 実ファイルを書き出せたか。未対応形式は履歴のみ。 */
   rendered?: boolean;
+  /**
+   * 画像の解決状態（第7章 7-9）。revision は内容の版であって解決状態を含まないため、
+   * 「同じ版でも中身の違うファイル」を見分けるにはこちらを見る。
+   */
+  assetResolution?: AssetResolution;
+}
+
+/** 出力時に各画像がどの実体で解決されたか（第7章 7-9）。 */
+export interface AssetResolution {
+  original: number;
+  previewFallback: number;
+  missing: number;
 }
 
 /**

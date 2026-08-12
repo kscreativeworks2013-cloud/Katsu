@@ -7,7 +7,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import type { ProposalIR } from '../ir';
-import { assertIrVersion, fileNameFor, warningSummary, type Renderer } from './types';
+import { assertIrVersion, fileNameFor, isDraft, warningSummary, type Renderer } from './types';
 
 const PAGE = { width: 595.28, height: 841.89 };
 const MARGIN = 48;
@@ -248,7 +248,7 @@ export const pdfRenderer: Renderer = {
     }
 
     return {
-      fileName: fileNameFor(ir, 'pdf'),
+      fileName: fileNameFor(ir, 'pdf', isDraft(ir)),
       mimeType: 'application/pdf',
       bytes: await doc.save(),
     };

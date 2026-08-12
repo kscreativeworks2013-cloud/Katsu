@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { importImageFromUrl } from './importImage';
 
-// jsdom には canvas が無いため、縮小の経路は「縮小できない」側に落ちる。
+// 取り込みは原寸のまま行う（縮小は preview の仕事。第7章 7-6）。
 // 取り込めない場合に理由を返すことが、登録画面での明示の前提になる（第6章 6-8）。
 
 afterEach(() => {
@@ -19,13 +19,13 @@ function mockFetch(response: Partial<Response> | Error) {
 }
 
 describe('importImageFromUrl', () => {
-  it('は小さい画像をそのまま data URI として取り込む', async () => {
+  it('は取得した画像を原寸のまま返す', async () => {
     const blob = new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' });
     mockFetch({ ok: true, blob: () => Promise.resolve(blob) });
 
     const outcome = await importImageFromUrl('https://example.com/a.png');
 
-    expect(outcome.image?.dataUri.startsWith('data:image/png;base64,')).toBe(true);
+    expect(outcome.image?.blob.size).toBe(4);
     expect(outcome.image?.mimeType).toBe('image/png');
     expect(outcome.reason).toBeUndefined();
   });
@@ -54,13 +54,12 @@ describe('importImageFromUrl', () => {
     );
   });
 
-  it('は上限を超えて縮小もできない場合に理由を返す', async () => {
+  it('は大きい画像も縮めずに取り込む（縮小は preview 側の仕事）', async () => {
     const blob = new Blob([new Uint8Array(200_000)], { type: 'image/png' });
     mockFetch({ ok: true, blob: () => Promise.resolve(blob) });
 
-    const outcome = await importImageFromUrl('https://example.com/big.png', 1000);
+    const outcome = await importImageFromUrl('https://example.com/big.png');
 
-    expect(outcome.image).toBeUndefined();
-    expect(outcome.reason).toMatch(/縮小できませんでした/);
+    expect(outcome.image?.blob.size).toBe(200_000);
   });
 });

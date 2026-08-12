@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { GENRES } from '../data/workflow';
 import { resolveAsset } from '../domain/assets';
 import { useAppStore } from '../store/context';
+import { AssetImage } from '../ui/AssetImage';
 import { AssetPicker } from '../ui/AssetPicker';
 import { Card, Chips, EmptyState, Field, PageHeader } from '../ui/primitives';
 
@@ -87,15 +88,11 @@ export function PortfolioScreen() {
               const asset = resolveAsset(assets, work.assetId);
               return (
                 <figure className="tile" key={work.id} style={{ margin: 0 }}>
-                  {asset?.thumbnail ? (
-                    <img className="tile-art" src={asset.thumbnail} alt={work.title} />
-                  ) : (
-                    <div
-                      className="tile-art"
-                      style={{ ['--from' as string]: work.from, ['--to' as string]: work.to }}
-                      aria-hidden="true"
-                    />
-                  )}
+                  <AssetImage
+                    asset={asset}
+                    alt={work.title}
+                    fallback={{ from: work.from, to: work.to }}
+                  />
                   <figcaption className="tile-body">
                     <h4>{work.title}</h4>
                     <p>

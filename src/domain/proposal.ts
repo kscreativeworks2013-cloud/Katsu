@@ -16,6 +16,11 @@ export interface ImageSlot {
   source: SlotSource;
   /** スロットに入る最大枚数。shots のように可変のものは Infinity。 */
   capacity: number;
+  /**
+   * A4 縦の版面での想定配置幅（mm）。必要ピクセル数の判定に使う（第7章 7-2）。
+   * 版面設計フェーズでレイアウトを詰めるときは、この値も一緒に更新する。
+   */
+  printWidthMm: number;
 }
 
 export interface ProposalSection {
@@ -31,8 +36,20 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     ja: '表紙',
     en: 'Cover',
     imageSlots: [
-      { id: 'cover-logo', label: 'ブランドロゴ', source: 'logo', capacity: 1 },
-      { id: 'cover-key', label: 'キービジュアル', source: 'moodboard', capacity: 1 },
+      {
+        id: 'cover-logo',
+        label: 'ブランドロゴ',
+        source: 'logo',
+        capacity: 1,
+        printWidthMm: 60,
+      },
+      {
+        id: 'cover-key',
+        label: 'キービジュアル',
+        source: 'moodboard',
+        capacity: 1,
+        printWidthMm: 210,
+      },
     ],
   },
   {
@@ -40,7 +57,13 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     ja: 'ブランド分析',
     en: 'Brand Analysis',
     imageSlots: [
-      { id: 'brand-mood', label: 'ブランドイメージ', source: 'moodboard', capacity: 2 },
+      {
+        id: 'brand-mood',
+        label: 'ブランドイメージ',
+        source: 'moodboard',
+        capacity: 2,
+        printWidthMm: 100,
+      },
     ],
   },
   { id: 'competitors', ja: '競合分析', en: 'Competitive Landscape', imageSlots: [] },
@@ -49,14 +72,22 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     ja: '撮影コンセプト',
     en: 'Creative Concept',
     imageSlots: [
-      { id: 'concept-key', label: 'キービジュアル', source: 'moodboard', capacity: 1 },
+      {
+        id: 'concept-key',
+        label: 'キービジュアル',
+        source: 'moodboard',
+        capacity: 1,
+        printWidthMm: 150,
+      },
     ],
   },
   {
     id: 'moodboard',
     ja: 'ムードボード',
     en: 'Mood Board',
-    imageSlots: [{ id: 'mood-tiles', label: 'タイル', source: 'moodboard', capacity: 8 }],
+    imageSlots: [
+      { id: 'mood-tiles', label: 'タイル', source: 'moodboard', capacity: 8, printWidthMm: 62 },
+    ],
   },
   {
     id: 'shots',
@@ -68,6 +99,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: '絵コンテ',
         source: 'shots',
         capacity: Number.POSITIVE_INFINITY,
+        printWidthMm: 62,
       },
     ],
   },
@@ -76,7 +108,15 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     id: 'works',
     ja: '実績',
     en: 'Selected Works',
-    imageSlots: [{ id: 'works-grid', label: '選定作品', source: 'portfolio', capacity: 3 }],
+    imageSlots: [
+      {
+        id: 'works-grid',
+        label: '選定作品',
+        source: 'portfolio',
+        capacity: 3,
+        printWidthMm: 62,
+      },
+    ],
   },
   { id: 'staff', ja: 'スタッフ構成', en: 'Crew', imageSlots: [] },
   { id: 'schedule', ja: 'スケジュール', en: 'Schedule', imageSlots: [] },

@@ -1,81 +1,27 @@
 /*
- * 画像アセットの参照解決と容量方針（第5章 5-1、第6章 6-9）。
- * メタデータと実体を分け、localStorage にはサムネイルのみを上限付きで持つ。
+ * 画像アセットの参照解決と印刷解像度の判定（第5章 5-1、第7章 7-2／7-5／7-6）。
  *
- * この上限（1枚96KB／合計2MB）は localStorage しか保存先が無いことに由来する暫定制約で、
- * backlog 1「原寸アセットの扱い」で保存先ごと置き換える。この制約を前提にした分岐を
- * これ以上増やさないこと（増やすほど置き換え時の手戻りが大きくなる）。
+ * メタデータ（この Asset）は localStorage、実体（Blob）は AssetBinaryStore という分離。
+ * 出力に使えるのは original だけで、preview は画面表示専用。この一貫性を崩さないこと。
  */
 
-import type { Asset } from '../data/types';
+import type { Asset, AssetVariant, VariantKind } from '../data/types';
 
-/** サムネイル1枚あたりの上限（data URI の文字数 ≒ バイト数として扱う）。 */
-export const THUMBNAIL_LIMIT_BYTES = 96_000;
+/** 実寸配置での最低ライン。これを下回る画像は警告する（第7章 7-2）。 */
+export const MIN_PPI = 200;
 
-/** サムネイル合計の上限。 */
-export const THUMBNAIL_BUDGET_BYTES = 2_000_000;
+/** 目標解像度。表紙などはここを狙う。 */
+export const TARGET_PPI = 300;
 
-/** 上限に近づいたと見なす割合。これを超えたら画面で警告する（第6章 6-9）。 */
-export const STORAGE_WARN_RATIO = 0.8;
-
-export type StorageLevel = 'ok' | 'warn' | 'full';
-
-export interface StorageUsage {
-  bytes: number;
-  budgetBytes: number;
-  ratio: number;
-  level: StorageLevel;
-  /** 実体（サムネイル）を持つアセットの数。 */
-  storedCount: number;
-  /** 実体を持たない（成果物に入らない）アセットの数。 */
-  referenceOnlyCount: number;
+/** 必要ピクセル数：配置幅(mm) ÷ 25.4 × ppi。 */
+export function requiredPixels(widthMm: number, ppi: number = MIN_PPI): number {
+  return Math.round((widthMm / 25.4) * ppi);
 }
 
-/** 画像保存の使用量。設定画面での可視化と、登録時の判定に使う（第6章 6-9）。 */
-export function storageUsage(assets: Record<string, Asset>): StorageUsage {
-  const all = Object.values(assets);
-  const bytes = thumbnailBytes(assets);
-  const ratio = bytes / THUMBNAIL_BUDGET_BYTES;
-  return {
-    bytes,
-    budgetBytes: THUMBNAIL_BUDGET_BYTES,
-    ratio,
-    level: ratio >= 1 ? 'full' : ratio >= STORAGE_WARN_RATIO ? 'warn' : 'ok',
-    storedCount: all.filter((asset) => asset.thumbnail).length,
-    referenceOnlyCount: all.filter((asset) => !asset.thumbnail).length,
-  };
-}
-
-export interface ThumbnailDecision {
-  thumbnail?: string;
-  /** 受け入れなかった理由。画面はこれをそのまま利用者に示す（黙って落とさない）。 */
-  rejected?: string;
-}
-
-/**
- * 登録時の受け入れ判定（第6章 6-9）。
- * 収まらない場合は理由を返す。呼び出し側は必ずその理由を利用者に見せること。
- */
-export function decideThumbnail(
-  assets: Record<string, Asset>,
-  thumbnail: string | undefined,
-): ThumbnailDecision {
-  if (!thumbnail) return {};
-
-  if (thumbnail.length > THUMBNAIL_LIMIT_BYTES) {
-    return {
-      rejected: `1枚あたりの上限（${Math.round(THUMBNAIL_LIMIT_BYTES / 1000)}KB）を超えるため保存できません`,
-    };
-  }
-
-  const used = thumbnailBytes(assets);
-  if (used + thumbnail.length > THUMBNAIL_BUDGET_BYTES) {
-    return {
-      rejected: `画像の保存容量（${Math.round(THUMBNAIL_BUDGET_BYTES / 1_000_000)}MB）がいっぱいのため保存できません。不要な画像を解除してください`,
-    };
-  }
-
-  return { thumbnail };
+/** 実配置での有効解像度（ppi）。 */
+export function effectivePpi(pixels: number, widthMm: number): number {
+  if (widthMm <= 0) return 0;
+  return Math.round(pixels / (widthMm / 25.4));
 }
 
 /** 参照解決。見つからない場合は undefined を返し、呼び出し側がプレースホルダに落とす。 */
@@ -87,20 +33,107 @@ export function resolveAsset(
   return assets[assetId];
 }
 
-export function thumbnailBytes(assets: Record<string, Asset>): number {
-  return Object.values(assets).reduce((sum, asset) => sum + (asset.thumbnail?.length ?? 0), 0);
+export function variantOf(
+  asset: Asset | undefined,
+  kind: VariantKind,
+): AssetVariant | undefined {
+  return asset?.variants.find((variant) => variant.kind === kind);
 }
 
-/** 容量超過時の退避：全アセットのサムネイルを落とす。参照とメタデータは失わない。 */
-export function stripThumbnails(assets: Record<string, Asset>): Record<string, Asset> {
-  return Object.fromEntries(
-    Object.entries(assets).map(([id, asset]) => {
-      if (!asset.thumbnail) return [id, asset];
-      const rest = { ...asset };
-      delete rest.thumbnail;
-      return [id, rest];
-    }),
+/** 出力に使える実体（原寸）を持つか。preview しか無いアセットは出力に使えない。 */
+export function hasOriginal(asset: Asset | undefined): boolean {
+  return !!variantOf(asset, 'original');
+}
+
+/**
+ * 用途ごとの variant の選択（第7章 7-7）。
+ * 画面は preview を優先し、出力は原寸のみを狙う（原寸が無ければ呼び出し側が警告する）。
+ */
+export function pickVariant(
+  asset: Asset | undefined,
+  use: 'screen' | 'output',
+): AssetVariant | undefined {
+  if (!asset) return undefined;
+  const original = variantOf(asset, 'original');
+  const preview = variantOf(asset, 'preview');
+  return use === 'screen' ? (preview ?? original) : original;
+}
+
+/** variant を差し替える（同じ kind は1つまで）。 */
+export function withVariant(asset: Asset, variant: AssetVariant): Asset {
+  return {
+    ...asset,
+    variants: [...asset.variants.filter((item) => item.kind !== variant.kind), variant],
+  };
+}
+
+export interface AssetUsage {
+  /** メタデータ上の実体の合計バイト数。 */
+  bytes: number;
+  /** ブラウザが見積もる利用可能容量（取得できない環境では undefined）。 */
+  quotaBytes?: number;
+  /** 原寸を持つアセットの数（＝出力に使えるもの）。 */
+  originalCount: number;
+  /** preview しか持たないアセットの数（＝出力に使えないもの）。 */
+  previewOnlyCount: number;
+  /** 実体をまったく持たないアセットの数。 */
+  referenceOnlyCount: number;
+  /** 記述子はあるのに実体が取れないアセットの数（第7章 7-11）。 */
+  missingCount: number;
+}
+
+/**
+ * 保存状況の集計（第7章 7-10）。
+ * IndexedDB の上限はブラウザが動的に決めるため、固定の上限値は持たない。
+ */
+export function assetUsage(
+  assets: Record<string, Asset>,
+  missingIds: readonly string[] = [],
+  quotaBytes?: number,
+): AssetUsage {
+  const all = Object.values(assets);
+  const missing = new Set(missingIds);
+  return {
+    bytes: all.reduce(
+      (sum, asset) => sum + asset.variants.reduce((inner, item) => inner + item.bytes, 0),
+      0,
+    ),
+    quotaBytes,
+    originalCount: all.filter((asset) => hasOriginal(asset) && !missing.has(asset.id)).length,
+    previewOnlyCount: all.filter(
+      (asset) => !hasOriginal(asset) && asset.variants.length > 0 && !missing.has(asset.id),
+    ).length,
+    referenceOnlyCount: all.filter((asset) => asset.variants.length === 0).length,
+    missingCount: all.filter((asset) => missing.has(asset.id)).length,
+  };
+}
+
+/**
+ * メタデータと実体の突き合わせ（第7章 7-11）。
+ * 記述子はあるのに実体が無いものが消失。両者の不一致が消失の唯一の観測点になる。
+ */
+export function detectMissingAssets(
+  assets: Record<string, Asset>,
+  storedKeys: readonly string[],
+): string[] {
+  const keys = new Set(storedKeys);
+  return Object.values(assets)
+    .filter(
+      (asset) =>
+        asset.variants.length > 0 && asset.variants.every((variant) => !keys.has(variant.key)),
+    )
+    .map((asset) => asset.id);
+}
+
+/** どのアセットからも参照されていない実体のキー（孤児）。 */
+export function orphanKeys(
+  assets: Record<string, Asset>,
+  storedKeys: readonly string[],
+): string[] {
+  const known = new Set(
+    Object.values(assets).flatMap((asset) => asset.variants.map((variant) => variant.key)),
   );
+  return storedKeys.filter((key) => !known.has(key));
 }
 
 /** 出力物に載せる出自表示（第5章 5-1：説明責任）。 */

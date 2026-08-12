@@ -1,10 +1,10 @@
-import type { CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
 import type { MoodCategory, MoodTile } from '../data/types';
 import { MOOD_CATEGORY_LABEL } from '../data/workflow';
 import { resolveAsset } from '../domain/assets';
 import { createId } from '../lib/projects';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
+import { AssetImage } from '../ui/AssetImage';
 import { AssetPicker } from '../ui/AssetPicker';
 import { Card, EmptyState, PageHeader, Skeleton, Swatches } from '../ui/primitives';
 
@@ -130,24 +130,11 @@ export function MoodboardScreen() {
                       const asset = resolveAsset(assets, tile.assetId);
                       return (
                         <figure className="tile" key={tile.id} style={{ margin: 0 }}>
-                          {asset?.thumbnail ? (
-                            <img
-                              className="tile-art"
-                              src={asset.thumbnail}
-                              alt={tile.caption}
-                            />
-                          ) : (
-                            <div
-                              className="tile-art"
-                              style={
-                                {
-                                  '--from': tile.from,
-                                  '--to': tile.to,
-                                } as CSSProperties
-                              }
-                              aria-hidden="true"
-                            />
-                          )}
+                          <AssetImage
+                            asset={asset}
+                            alt={tile.caption}
+                            fallback={{ from: tile.from, to: tile.to }}
+                          />
                           <figcaption className="tile-body">
                             <label className="field">
                               <span className="visually-hidden">キャプション</span>

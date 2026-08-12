@@ -4,6 +4,8 @@ import type { ExportFormat, ExportRecord, Language } from '../data/types';
 import { EXPORT_FORMAT_LABEL, LANGUAGE_LABEL } from '../data/workflow';
 import { blockingWarnings, buildProposalIR, type Lang, type ProposalIR } from '../domain/ir';
 import { isSupportedFormat, loadRenderer } from '../domain/render';
+import { fileNameFor } from '../domain/render/types';
+import { isDegraded, resolveProposalAssets } from '../domain/resolveAssets';
 import { downloadFile } from '../lib/download';
 import { createId, formatDate } from '../lib/projects';
 import { loadJapaneseFont } from '../lib/pdfFont';
@@ -16,7 +18,7 @@ const FORMATS: ExportFormat[] = ['pdf', 'pptx', 'docx', 'md'];
 export function ExportScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace, provenance } = useProject(projectId);
-  const { recordExports, portfolio, assets } = useAppStore();
+  const { recordExports, portfolio, assets, binaryStore, assetStorage } = useAppStore();
   const [formats, setFormats] = useState<ExportFormat[]>(['pdf', 'pptx']);
   const [language, setLanguage] = useState<Language>('both');
   const [template, setTemplate] = useState('standard');
@@ -40,6 +42,7 @@ export function ExportScreen() {
     builtAt: new Date(0),
   });
   const warnings = blockingWarnings(previewIr);
+  const missingImages = assetStorage.missingAssetIds.length;
 
   function toggleFormat(format: ExportFormat) {
     setFormats((current) =>
@@ -49,25 +52,37 @@ export function ExportScreen() {
     );
   }
 
+  /**
+   * 出力（第6章 6-5、第7章 7-8）。
+   * 構築 → 解決（実体の取り出し） → レンダリング の順に進める。
+   * 解決状態は revision に混ぜず、出力履歴とファイル名で区別する（第7章 7-9）。
+   */
   async function renderAll(irs: ProposalIR[]): Promise<ExportRecord[]> {
     const stamp = new Date().toISOString().slice(0, 10);
     const records: ExportRecord[] = [];
     // フォントは PDF を選んだときだけ読み込む（第6章 6-6）。
     const fontBytes = formats.includes('pdf') ? await loadJapaneseFont() : undefined;
 
+    const resolved = await Promise.all(
+      irs.map((ir) => resolveProposalAssets(ir, binaryStore, assets)),
+    );
+
     for (const format of formats) {
       const renderer = await loadRenderer(format);
-      for (const ir of irs) {
+      for (const outcome of resolved) {
+        const ir = outcome.ir;
+        const draft = isDegraded(outcome.resolution);
         if (!renderer) {
           // 未対応形式は履歴だけを残す。何が出ていないかを画面で明示する。
           records.push({
             id: createId('exp'),
-            fileName: `${ir.project.brand.replace(/\s+/g, '_')}_Proposal_${ir.lang.toUpperCase()}_${ir.revision}.${format}`,
+            fileName: fileNameFor(ir, format, draft),
             format,
             language: ir.lang,
             createdAt: stamp,
             irRevision: ir.revision,
             rendered: false,
+            assetResolution: outcome.resolution,
           });
           continue;
         }
@@ -82,6 +97,7 @@ export function ExportScreen() {
           createdAt: stamp,
           irRevision: ir.revision,
           rendered: true,
+          assetResolution: outcome.resolution,
         });
       }
     }
@@ -92,7 +108,7 @@ export function ExportScreen() {
     if (formats.length === 0 || !project || !workspace) return;
 
     // 警告があっても出力自体はブロックしない。確認だけ挟む（第4章 4-4、第6章 6-4）。
-    if (warnings.length > 0 && !skipWarningCheck) {
+    if ((warnings.length > 0 || missingImages > 0) && !skipWarningCheck) {
       setConfirming(true);
       return;
     }
@@ -203,6 +219,14 @@ export function ExportScreen() {
             {warnings.map((warning, index) => (
               <li key={index}>{warning.message}</li>
             ))}
+            {/* 実体の消失は解決フェーズで分かるが、起動時の突き合わせ結果はここで先に示せる（第7章 7-11）。 */}
+            {missingImages > 0 && (
+              <li>
+                画像 {missingImages}
+                件が保存領域から失われています。その画像は成果物に含まれず、ファイル名に -draft
+                が付きます。
+              </li>
+            )}
           </ul>
           <div className="actions" style={{ marginTop: 16 }}>
             <button className="btn" type="button" onClick={() => run(true)}>
@@ -234,6 +258,7 @@ export function ExportScreen() {
                   <th>形式</th>
                   <th>言語</th>
                   <th>版</th>
+                  <th>画像</th>
                   <th>出力日</th>
                 </tr>
               </thead>
@@ -249,6 +274,20 @@ export function ExportScreen() {
                     </td>
                     <td>{LANGUAGE_LABEL[record.language]}</td>
                     <td>{record.irRevision ?? '—'}</td>
+                    {/* 同じ版でも解決状態で中身が変わる。どちらで出たかを残す（第7章 7-9）。 */}
+                    <td>
+                      {!record.assetResolution ? (
+                        '—'
+                      ) : isDegraded(record.assetResolution) ? (
+                        <Badge tone="alert">
+                          一部が低解像度（原寸 {record.assetResolution.original}／縮小版{' '}
+                          {record.assetResolution.previewFallback}／欠落{' '}
+                          {record.assetResolution.missing}）
+                        </Badge>
+                      ) : (
+                        `原寸 ${record.assetResolution.original}件`
+                      )}
+                    </td>
                     <td>{formatDate(record.createdAt)}</td>
                   </tr>
                 ))}

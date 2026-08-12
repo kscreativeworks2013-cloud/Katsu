@@ -1,14 +1,19 @@
 import type { Language, ModelAssignment } from '../data/types';
-import { storageUsage } from '../domain/assets';
+import { variantOf } from '../domain/assets';
 import { LANGUAGE_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
+import { PERSIST_STATE_LABEL, persistNotice } from '../lib/storagePersistence';
 import { useAppStore } from '../store/context';
 import { Card, Field, PageHeader } from '../ui/primitives';
 
 /** 3-13 設定：AIモデル、言語、会社情報、見積もり基準を一元管理する。 */
 export function SettingsScreen() {
-  const { settings, updateSettings, assets } = useAppStore();
-  const usage = storageUsage(assets);
+  const { settings, updateSettings, assets, assetStorage, removeAsset } = useAppStore();
+  const usage = assetStorage.usage;
+  const missing = assetStorage.missingAssetIds
+    .map((id) => assets[id])
+    .filter((asset) => asset !== undefined);
+  const stored = Object.values(assets).filter((asset) => asset.variants.length > 0);
 
   function updateModel(id: string, patch: Partial<ModelAssignment>) {
     updateSettings({
@@ -114,26 +119,94 @@ export function SettingsScreen() {
 
       <Card
         title="画像の保存容量"
-        description="ブラウザ内（localStorage）に保存できる画像の量です。原寸の保存は次フェーズで対応します。"
+        description="原寸はブラウザ内（IndexedDB）に保存します。上限はブラウザが空き容量に応じて決めるため、固定値はありません。"
       >
         <p className="lede">
-          {Math.round(usage.bytes / 1000).toLocaleString()}KB /{' '}
-          {Math.round(usage.budgetBytes / 1000).toLocaleString()}KB（
-          {Math.round(usage.ratio * 100)}% 使用）
+          {Math.round(usage.bytes / 1_000_000).toLocaleString()}MB 使用
+          {usage.quotaBytes
+            ? `（この端末の利用可能量の目安 ${Math.round(usage.quotaBytes / 1_000_000).toLocaleString()}MB）`
+            : '（利用可能量はこの環境では取得できません）'}
         </p>
-        <span className="meter" style={{ width: '100%', marginTop: 8 }} aria-hidden="true">
-          <span style={{ width: `${Math.min(100, Math.round(usage.ratio * 100))}%` }} />
-        </span>
         <p className="muted" style={{ marginTop: 10 }}>
-          保存済み {usage.storedCount}件／参照のみ {usage.referenceOnlyCount}件
-          （参照のみの画像は PDF・PowerPoint に含まれません）
+          原寸あり {usage.originalCount}件／表示用のみ {usage.previewOnlyCount}件／参照のみ{' '}
+          {usage.referenceOnlyCount}件／失われた画像 {usage.missingCount}件
+          （原寸のある画像だけが出力に使えます）
         </p>
-        {usage.level !== 'ok' && (
-          <p className="form-error" role="status" style={{ marginTop: 12 }}>
-            {usage.level === 'full'
-              ? '容量がいっぱいです。新しい画像を登録する前に、不要な画像を解除してください。'
-              : '容量が残りわずかです。不要な画像の解除を検討してください。'}
+
+        <p className="muted" style={{ marginTop: 10 }}>
+          保存の永続化：{PERSIST_STATE_LABEL[assetStorage.persist]}
+        </p>
+        {persistNotice(assetStorage.persist) && (
+          <p className="form-error" role="status" style={{ marginTop: 8 }}>
+            {persistNotice(assetStorage.persist)}
           </p>
+        )}
+
+        {assetStorage.migration && (
+          <p className="muted" style={{ marginTop: 10 }}>
+            以前の形式からの移行：{assetStorage.migration.moved}件を移しました
+            {assetStorage.migration.failed > 0 &&
+              `／${assetStorage.migration.failed}件は移行できませんでした（登録し直してください）`}
+          </p>
+        )}
+
+        {missing.length > 0 && (
+          <div className="stack" style={{ marginTop: 14, gap: 8 }}>
+            <p className="form-error" role="status">
+              次の画像は保存領域から失われています。登録元の画面で原寸を貼り直してください。参照は残しています。
+            </p>
+            <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
+              {missing.map((asset) => (
+                <li key={asset.id}>
+                  {asset.label}（{asset.source}）
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {stored.length > 0 && (
+          <div className="table-scroll" style={{ marginTop: 14 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>画像</th>
+                  <th>原寸</th>
+                  <th>サイズ</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {stored.map((asset) => {
+                  const original = variantOf(asset, 'original');
+                  return (
+                    <tr key={asset.id}>
+                      <td>{asset.label}</td>
+                      <td>
+                        {original ? `${original.width}×${original.height}px` : '（表示用のみ）'}
+                      </td>
+                      <td>
+                        {Math.round(
+                          asset.variants.reduce((sum, item) => sum + item.bytes, 0) / 1000,
+                        ).toLocaleString()}
+                        KB
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn--ghost btn--small"
+                          type="button"
+                          onClick={() => removeAsset(asset.id)}
+                          aria-label={`${asset.label} の画像を削除`}
+                        >
+                          削除
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 

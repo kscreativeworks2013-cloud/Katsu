@@ -1,34 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import type { Asset } from '../../data/types';
-import { buildTestIR, loadTestFont, TINY_PNG, workspaceWithBody } from '../../test/ir';
+import { resolveProposalAssets } from '../resolveAssets';
+import { dataUriToBlob } from '../../lib/imageProcessing';
+import {
+  buildTestIR,
+  loadTestFont,
+  storeWith,
+  testAsset,
+  TINY_PNG,
+  workspaceWithAsset,
+} from '../../test/ir';
 import { markdownRenderer, renderMarkdownText } from './markdown';
 import { pdfRenderer } from './pdf';
 import { pptxRenderer } from './pptx';
 import { isSupportedFormat, loadRenderer } from './index';
 
-function withImage(): ReturnType<typeof buildTestIR> {
-  const assets: Record<string, Asset> = {
-    'ast-1': {
-      id: 'ast-1',
-      origin: 'upload',
-      label: 'キービジュアル',
-      source: 'key.png',
-      runId: null,
-      mimeType: 'image/png',
-      createdAt: '',
-      thumbnail: TINY_PNG,
-    },
-  };
-  const base = workspaceWithBody();
-  return buildTestIR({
-    assets,
-    workspace: {
-      ...base,
-      moodboard: base.moodboard.map((tile, index) =>
-        index === 0 ? { ...tile, assetId: 'ast-1' } : tile,
-      ),
-    },
-  });
+/** 実体を解決した IR。レンダラが受け取るのは常にこの形（第7章 7-8）。 */
+async function withImage(): Promise<ReturnType<typeof buildTestIR>> {
+  const assets = { 'ast-1': testAsset('ast-1', { width: 3000, height: 2000 }) };
+  const ir = buildTestIR({ assets, workspace: workspaceWithAsset('ast-1') });
+  const store = storeWith({ 'ast-1:original': dataUriToBlob(TINY_PNG)! });
+  return (await resolveProposalAssets(ir, store, assets)).ir;
 }
 
 describe('レンダラ契約', () => {
@@ -65,7 +56,7 @@ describe('Markdown レンダラ', () => {
   });
 
   it('は画像を出自つきで書き出す', async () => {
-    const text = await renderMarkdownText(withImage());
+    const text = await renderMarkdownText(await withImage());
 
     expect(text).toContain('出自：持ち込み');
   });
@@ -84,7 +75,7 @@ describe('PowerPoint レンダラ', () => {
   }, 30_000);
 
   it('は画像つきでも生成できる', async () => {
-    const file = await pptxRenderer.render(withImage());
+    const file = await pptxRenderer.render(await withImage());
 
     expect(file.bytes.length).toBeGreaterThan(1000);
   }, 30_000);
@@ -108,7 +99,7 @@ describe('PDF レンダラ', () => {
   }, 60_000);
 
   it('は画像を埋め込める', async () => {
-    const file = await pdfRenderer.render(withImage(), { fontBytes: loadTestFont() });
+    const file = await pdfRenderer.render(await withImage(), { fontBytes: loadTestFont() });
 
     expect(new TextDecoder().decode(file.bytes.slice(0, 8)).startsWith('%PDF-')).toBe(true);
   }, 60_000);

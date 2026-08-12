@@ -1,7 +1,7 @@
 /*
- * localStorage への永続化（第4章 4-7、第5章 5-1）。
- * 保存に失敗してもアプリは止めない。容量超過時はまずアセットのサムネイルを退避し、
- * それでも失敗すればメモリ上の状態だけで動作を継続する。
+ * localStorage への永続化（第4章 4-7、第5章 5-1、第7章 7-4）。
+ * ここに載るのはメタデータだけで、画像の実体は AssetBinaryStore（IndexedDB）にある。
+ * 保存に失敗してもアプリは止めないが、失敗したことは必ず画面に出す。
  * サーバー側の永続化とマルチユーザーの同時編集はスコープ外。
  */
 
@@ -14,11 +14,11 @@ import type {
   Settings,
   Workspace,
 } from '../data/types';
-import { stripThumbnails } from '../domain/assets';
 
 const STORAGE_KEY = 'lbvpos.state';
 // v2: StepStatus に review、StepRecord に確認済み、assets を追加。
-const SCHEMA_VERSION = 2;
+// v3: Asset.thumbnail（data URI）を廃し、実体を AssetBinaryStore へ出して variants を持つ。
+const SCHEMA_VERSION = 3;
 
 export interface PersistedState {
   version: number;
@@ -40,11 +40,38 @@ function storage(): Storage | null {
   }
 }
 
+/** v2 のアセット。実体を data URI で持っていた（第7章 7-12 の移行元）。 */
+type LegacyAsset = Omit<Asset, 'variants'> & { thumbnail?: string };
+
+type LegacyState = Omit<PersistedState, 'assets'> & { assets: Record<string, LegacyAsset> };
+
+export interface LoadedState {
+  state: PersistedState;
+  /**
+   * v2 から持ち越したサムネイル（assetId → data URI）。
+   * 起動時に AssetBinaryStore へ移し、preview の variant にする（第7章 7-12）。
+   */
+  legacyThumbnails: Record<string, string>;
+}
+
+/** v2 の状態を v3 の形に読み替える。実体の移送は呼び出し側（非同期）で行う。 */
+function migrateFromV2(parsed: LegacyState): LoadedState {
+  const legacyThumbnails: Record<string, string> = {};
+  const assets: Record<string, Asset> = {};
+
+  for (const [id, legacy] of Object.entries(parsed.assets ?? {})) {
+    const { thumbnail, ...rest } = legacy;
+    if (thumbnail) legacyThumbnails[id] = thumbnail;
+    assets[id] = { ...rest, variants: [] };
+  }
+
+  return { state: { ...parsed, version: SCHEMA_VERSION, assets }, legacyThumbnails };
+}
+
 /**
- * 保存済みの状態を読む。スキーマバージョンが違う場合は捨てる
- * （本フェーズでは移行処理を書かない）。
+ * 保存済みの状態を読む。v2 は移行して読み、それ以外の版差は捨てる。
  */
-export function loadState(): PersistedState | null {
+export function loadState(): LoadedState | null {
   const store = storage();
   if (!store) return null;
 
@@ -52,9 +79,10 @@ export function loadState(): PersistedState | null {
     const raw = store.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PersistedState;
-    if (parsed.version !== SCHEMA_VERSION) return null;
     if (!Array.isArray(parsed.projects)) return null;
-    return parsed;
+    if (parsed.version === 2) return migrateFromV2(parsed as unknown as LegacyState);
+    if (parsed.version !== SCHEMA_VERSION) return null;
+    return { state: parsed, legacyThumbnails: {} };
   } catch {
     return null;
   }
@@ -62,41 +90,25 @@ export function loadState(): PersistedState | null {
 
 /**
  * 保存の結果（第6章 6-9）。
- * 画像は「メモリ上で継続」がリロード時の消失を意味するため、テキストと同じ扱いにはできない。
- * 退避や失敗は必ず呼び出し側へ返し、画面で伝える。
+ * 失敗は必ず呼び出し側へ返し、画面で伝える。黙って継続しない。
+ * v3 以降ここに載るのはメタデータだけなので、画像を退避して再試行する経路は無い。
  */
 export type SaveOutcome =
-  | { status: 'saved' }
-  | { status: 'unavailable' }
-  | { status: 'degraded'; message: string }
-  | { status: 'failed'; message: string };
+  { status: 'saved' } | { status: 'unavailable' } | { status: 'failed'; message: string };
 
 export function saveState(state: Omit<PersistedState, 'version'>): SaveOutcome {
   const store = storage();
   if (!store) return { status: 'unavailable' };
 
-  const write = (payload: Omit<PersistedState, 'version'>) =>
-    store.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...payload }));
-
   try {
-    write(state);
+    store.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...state }));
     return { status: 'saved' };
   } catch {
-    // 容量超過。サムネイルを退避して再試行する（メタデータと参照は保持）。
-    try {
-      write({ ...state, assets: stripThumbnails(state.assets) });
-      return {
-        status: 'degraded',
-        message:
-          '保存容量が足りないため、画像の保存を解除しました。案件と文章は保存されています。画像を登録し直す前に、不要な画像を解除してください。',
-      };
-    } catch {
-      return {
-        status: 'failed',
-        message:
-          '保存容量が足りず、変更を保存できていません。このまま操作を続けると、リロード時に失われます。',
-      };
-    }
+    return {
+      status: 'failed',
+      message:
+        '保存容量が足りず、変更を保存できていません。このまま操作を続けると、リロード時に失われます。',
+    };
   }
 }
 

@@ -4,7 +4,7 @@
  */
 
 import type { ProposalIR } from '../ir';
-import { assertIrVersion, fileNameFor, warningSummary, type Renderer } from './types';
+import { assertIrVersion, fileNameFor, isDraft, warningSummary, type Renderer } from './types';
 
 function stamp(ir: ProposalIR): string {
   const iso = ir.builtAt;
@@ -93,7 +93,7 @@ export const markdownRenderer: Renderer = {
       .replace(/\n{3,}/g, '\n\n')
       .trimEnd()}\n`;
     return {
-      fileName: fileNameFor(ir, 'md'),
+      fileName: fileNameFor(ir, 'md', isDraft(ir)),
       mimeType: 'text/markdown',
       bytes: new TextEncoder().encode(text),
     };

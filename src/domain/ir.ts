@@ -12,9 +12,10 @@ import type {
   Project,
   Provenance,
   StepId,
+  VariantKind,
   Workspace,
 } from '../data/types';
-import { resolveAsset } from './assets';
+import { effectivePpi, pickVariant, requiredPixels, resolveAsset } from './assets';
 import { PROPOSAL_TEMPLATE, resolveSlot } from './proposal';
 import { metaFor } from './provenance';
 
@@ -22,16 +23,32 @@ export const IR_VERSION = 1;
 
 export type Lang = 'ja' | 'en';
 
+/** IR の image ブロックが指す実体（第7章 7-8）。実体そのものは解決フェーズで入る。 */
+export interface IRImageVariant {
+  kind: VariantKind;
+  key: string;
+  width: number;
+  height: number;
+}
+
 export type IRBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] }
   | {
       type: 'image';
       caption: string;
+      slotId: string;
       slotLabel: string;
+      /** このスロットの想定配置幅（mm）。解像度の判定根拠として出力側にも残す。 */
+      printWidthMm: number;
       assetId?: string;
       assetOrigin?: AssetOrigin;
-      /** 埋め込み可能な実体（data URI）。外部URL参照のときは undefined。 */
+      /** 出力に使う実体の記述子。原寸が無ければ undefined。 */
+      variant?: IRImageVariant;
+      /**
+       * 埋め込み可能な実体（data URI）。構築時は常に undefined で、
+       * resolveProposalAssets が埋める。revision には含めない（第7章 7-9）。
+       */
       data?: string;
       /** 外部URL参照のときの参照先。 */
       href?: string;
@@ -59,7 +76,20 @@ export interface IRSection {
 }
 
 export type IRWarningKind =
-  'stale' | 'acknowledged' | 'missing-section' | 'missing-image' | 'external-image';
+  | 'stale'
+  | 'acknowledged'
+  | 'missing-section'
+  | 'missing-image'
+  | 'external-image'
+  | 'low-resolution'
+  | 'preview-only'
+  | 'missing-binary';
+
+/**
+ * 解決フェーズで足される警告（第7章 7-11）。
+ * 端末の保存状態に由来するもので、提案内容ではないため revision に含めない。
+ */
+const RESOLVE_WARNING_KINDS: IRWarningKind[] = ['missing-binary'];
 
 export interface IRWarning {
   kind: IRWarningKind;
@@ -166,8 +196,10 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
     for (const image of images) {
       const asset = image.asset ?? resolveAsset(input.assets, undefined);
       const isExternal = asset?.origin === 'external';
+      const original = pickVariant(asset, 'output');
+
       // 取り込み済み（実体を持つ）外部画像は埋め込めるので警告しない（第6章 6-8）。
-      if (isExternal && !asset?.thumbnail) {
+      if (isExternal && asset?.variants.length === 0) {
         warnings.push({
           kind: 'external-image',
           severity: 'info',
@@ -175,14 +207,42 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
           message: `${image.caption} は取り込めていないため、PDF・PowerPoint には含まれません。`,
         });
       }
+
+      // 原寸が無い＝出力に使えない。preview があってもそれは画面用（第7章 7-6）。
+      if (asset && !original && asset.variants.length > 0) {
+        warnings.push({
+          kind: 'preview-only',
+          severity: 'warn',
+          sectionId,
+          message: `${image.caption} は表示用の縮小版しかないため、出力では画像が欠けます。原寸を登録し直してください。`,
+        });
+      }
+
+      // 原寸はあるが、このスロットの配置幅に対して足りない（第7章 7-2／7-3）。
+      const needed = requiredPixels(slot.printWidthMm);
+      if (original && original.width > 0 && original.width < needed) {
+        warnings.push({
+          kind: 'low-resolution',
+          severity: 'warn',
+          sectionId,
+          message: `${image.caption}（${slot.label}）は印刷解像度が不足しています：${effectivePpi(original.width, slot.printWidthMm)}ppi（配置幅${slot.printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
+        });
+      }
+
       blocks.push({
         type: 'image',
         caption: image.caption,
+        slotId: slot.id,
         slotLabel: slot.label,
+        printWidthMm: slot.printWidthMm,
         assetId: asset?.id,
         assetOrigin: asset?.origin,
-        // 埋め込めるのは data URI として保持している実体だけ（第6章 6-6）。
-        data: asset?.thumbnail,
+        variant: original && {
+          kind: original.kind,
+          key: original.key,
+          width: original.width,
+          height: original.height,
+        },
         href: isExternal ? asset?.source : undefined,
         fallback: image.fallback,
       });
@@ -209,12 +269,37 @@ function sourceFor(sectionId: string, input: BuildIRInput): IRSectionSource {
   };
 }
 
+/** revision の入力。組み立て途中の IR も、解決後の IR も渡せる。 */
+type RevisionInput = Omit<ProposalIR, 'revision' | 'builtAt'> & Partial<ProposalIR>;
+
+/**
+ * revision の算出対象から、解決状態を取り除く（第7章 7-9）。
+ * 埋め込んだ実体（data）と、解決フェーズが足した警告は「提案内容」ではない。
+ * これを除いておくことで、解決の前後で revision が変わらない。
+ */
+function forRevision(ir: RevisionInput) {
+  // 組み立て済みの IR をそのまま渡せるように、版と構築時刻はここで落とす。
+  const content = { ...ir };
+  delete content.revision;
+  delete content.builtAt;
+  return {
+    ...content,
+    sections: ir.sections.map((section) => ({
+      ...section,
+      blocks: section.blocks.map((block) =>
+        block.type === 'image' && block.data ? { ...block, data: undefined } : block,
+      ),
+    })),
+    warnings: ir.warnings.filter((warning) => !RESOLVE_WARNING_KINDS.includes(warning.kind)),
+  };
+}
+
 /**
  * 内容から決定的に算出する版ID（第6章 6-3）。
- * builtAt は含めないので、同じ内容なら何度組み立てても同じ revision になる。
+ * builtAt と解決状態は含めないので、同じ内容なら何度組み立てても同じ revision になる。
  */
-export function computeRevision(ir: Omit<ProposalIR, 'revision' | 'builtAt'>): string {
-  const json = JSON.stringify(ir);
+export function computeRevision(ir: RevisionInput): string {
+  const json = JSON.stringify(forRevision(ir));
   let hash = 0x811c9dc5;
   for (let index = 0; index < json.length; index += 1) {
     hash ^= json.charCodeAt(index);

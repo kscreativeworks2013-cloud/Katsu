@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Asset } from '../data/types';
 import {
-  THUMBNAIL_BUDGET_BYTES,
-  THUMBNAIL_LIMIT_BYTES,
-  storageUsage,
-  decideThumbnail,
+  assetUsage,
+  detectMissingAssets,
+  effectivePpi,
+  hasOriginal,
+  orphanKeys,
+  pickVariant,
+  requiredPixels,
   resolveAsset,
-  stripThumbnails,
 } from './assets';
+import { variantKey } from './assetStore';
 
-function asset(id: string, thumbnail?: string): Asset {
+function asset(id: string, kinds: ('original' | 'preview')[], width = 2000): Asset {
   return {
     id,
     origin: 'upload',
@@ -18,13 +21,20 @@ function asset(id: string, thumbnail?: string): Asset {
     runId: null,
     mimeType: 'image/jpeg',
     createdAt: '2026-08-12T00:00:00.000Z',
-    ...(thumbnail === undefined ? {} : { thumbnail }),
+    variants: kinds.map((kind) => ({
+      kind,
+      key: variantKey(id, kind),
+      width: kind === 'original' ? width : 800,
+      height: 600,
+      bytes: kind === 'original' ? 1_000_000 : 60_000,
+      mimeType: 'image/jpeg',
+    })),
   };
 }
 
 describe('resolveAsset', () => {
   it('は未登録・null 参照で undefined を返す（参照切れで壊れない）', () => {
-    const assets = { 'ast-1': asset('ast-1') };
+    const assets = { 'ast-1': asset('ast-1', []) };
     expect(resolveAsset(assets, 'ast-1')?.id).toBe('ast-1');
     expect(resolveAsset(assets, 'ast-missing')).toBeUndefined();
     expect(resolveAsset(assets, null)).toBeUndefined();
@@ -32,62 +42,85 @@ describe('resolveAsset', () => {
   });
 });
 
-describe('decideThumbnail', () => {
-  it('は1枚の上限を超えるサムネイルを理由つきで拒む', () => {
-    const decision = decideThumbnail({}, 'x'.repeat(THUMBNAIL_LIMIT_BYTES + 1));
-
-    expect(decision.thumbnail).toBeUndefined();
-    expect(decision.rejected).toMatch(/1枚あたりの上限/);
-    expect(decideThumbnail({}, 'x'.repeat(100)).thumbnail).toBe('x'.repeat(100));
+describe('印刷解像度', () => {
+  it('は配置幅とppiから必要ピクセル数を出す（第7章 7-2）', () => {
+    // A4全面（210mm）は 300ppi で約2480px、200ppi で約1654px。
+    expect(requiredPixels(210, 300)).toBe(2480);
+    expect(requiredPixels(210, 200)).toBe(1654);
+    expect(requiredPixels(62, 200)).toBe(488);
   });
 
-  it('は合計上限を超える場合に理由を返す（黙って落とさない）', () => {
-    // 予算をほぼ使い切った状態を1枚の巨大な既存サムネイルで作る。
-    const nearBudget = {
-      'ast-big': asset('ast-big', 'x'.repeat(THUMBNAIL_BUDGET_BYTES - 10)),
+  it('は1K級の生成画像が表紙に足りず、タイルには足りることを示す（第7章 7-3）', () => {
+    expect(effectivePpi(1024, 210)).toBe(124);
+    expect(effectivePpi(1024, 62)).toBe(420);
+    expect(effectivePpi(2048, 210)).toBe(248);
+  });
+});
+
+describe('variant の選択', () => {
+  it('は画面では preview を、出力では原寸だけを選ぶ（第7章 7-7）', () => {
+    const both = asset('ast-1', ['original', 'preview']);
+
+    expect(pickVariant(both, 'screen')?.kind).toBe('preview');
+    expect(pickVariant(both, 'output')?.kind).toBe('original');
+  });
+
+  it('は preview しか無いアセットを出力に使わない（第7章 7-6）', () => {
+    const previewOnly = asset('ast-2', ['preview']);
+
+    expect(hasOriginal(previewOnly)).toBe(false);
+    expect(pickVariant(previewOnly, 'output')).toBeUndefined();
+    // 画面には出せる。出力に使えないだけ。
+    expect(pickVariant(previewOnly, 'screen')?.kind).toBe('preview');
+  });
+
+  it('は preview が無ければ画面でも原寸を使う', () => {
+    expect(pickVariant(asset('ast-3', ['original']), 'screen')?.kind).toBe('original');
+  });
+});
+
+describe('assetUsage', () => {
+  it('は原寸あり・表示用のみ・参照のみ・消失を数える', () => {
+    const assets = {
+      'ast-1': asset('ast-1', ['original', 'preview']),
+      'ast-2': asset('ast-2', ['preview']),
+      'ast-3': asset('ast-3', []),
+      'ast-4': asset('ast-4', ['original']),
     };
-    const decision = decideThumbnail(nearBudget, 'y'.repeat(100));
+    const usage = assetUsage(assets, ['ast-4'], 500_000_000);
 
-    expect(decision.thumbnail).toBeUndefined();
-    expect(decision.rejected).toMatch(/いっぱい/);
-  });
-});
-
-describe('storageUsage', () => {
-  it('は使用量と、実体を持たないアセットの数を返す', () => {
-    const usage = storageUsage({
-      'ast-1': asset('ast-1', 'x'.repeat(1000)),
-      'ast-2': asset('ast-2'),
-    });
-
-    expect(usage.bytes).toBe(1000);
-    expect(usage.storedCount).toBe(1);
+    expect(usage.originalCount).toBe(1);
+    expect(usage.previewOnlyCount).toBe(1);
     expect(usage.referenceOnlyCount).toBe(1);
-    expect(usage.level).toBe('ok');
-  });
-
-  it('は上限に近づくと warn、超えると full を返す', () => {
-    const warn = storageUsage({
-      'ast-1': asset('ast-1', 'x'.repeat(Math.round(THUMBNAIL_BUDGET_BYTES * 0.85))),
-    });
-    const full = storageUsage({
-      'ast-1': asset('ast-1', 'x'.repeat(THUMBNAIL_BUDGET_BYTES)),
-    });
-
-    expect(warn.level).toBe('warn');
-    expect(full.level).toBe('full');
+    expect(usage.missingCount).toBe(1);
+    expect(usage.bytes).toBe(1_000_000 + 60_000 + 60_000 + 1_000_000);
+    expect(usage.quotaBytes).toBe(500_000_000);
   });
 });
 
-describe('stripThumbnails', () => {
-  it('はサムネイルだけを落とし、メタデータと参照は残す', () => {
-    const stripped = stripThumbnails({
-      'ast-1': asset('ast-1', 'data:image/jpeg;base64,xxxx'),
-      'ast-2': asset('ast-2'),
-    });
+describe('消失の検出（第7章 7-11）', () => {
+  it('は記述子があるのに実体が無いものを消失として挙げる', () => {
+    const assets = {
+      'ast-1': asset('ast-1', ['original', 'preview']),
+      'ast-2': asset('ast-2', ['original']),
+      'ast-3': asset('ast-3', []),
+    };
+    // ast-2 の実体だけが保存領域から消えている。
+    const missing = detectMissingAssets(assets, [
+      variantKey('ast-1', 'original'),
+      variantKey('ast-1', 'preview'),
+    ]);
 
-    expect(stripped['ast-1'].thumbnail).toBeUndefined();
-    expect(stripped['ast-1'].source).toBe('ast-1.jpg');
-    expect(stripped['ast-2']).toBeDefined();
+    expect(missing).toEqual(['ast-2']);
+  });
+
+  it('はどの記述子からも参照されない実体を孤児として挙げる', () => {
+    const assets = { 'ast-1': asset('ast-1', ['original']) };
+    const orphans = orphanKeys(assets, [
+      variantKey('ast-1', 'original'),
+      variantKey('ast-old', 'original'),
+    ]);
+
+    expect(orphans).toEqual([variantKey('ast-old', 'original')]);
   });
 });

@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderApp } from '../test/render';
 
 /*
- * 保存容量まわり（第6章 6-9）。
- * 画像はリロードで消えると復元できないため、退避・失敗・上限接近を必ず画面へ出す。
+ * 保存まわり（第6章 6-9、第7章 7-10／7-11）。
+ * メタデータは localStorage、画像の実体は AssetBinaryStore。どちらの失敗も画面に出す。
  */
 
 afterEach(() => {
@@ -13,39 +13,22 @@ afterEach(() => {
 });
 
 /** 指定の語を含む保存だけを失敗させる。マウント時の保存は通し、編集後の保存で枯渇させる。 */
-function failSetItemContaining(marker: string, { alwaysFail = false } = {}) {
+function failSetItemContaining(marker: string) {
   const original = Storage.prototype.setItem;
-  let failed = false;
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
     this: Storage,
     key: string,
     value: string,
   ) {
-    const matches = value.includes(marker);
-    if (matches && (alwaysFail || !failed)) {
-      failed = true;
-      throw new DOMException('quota', 'QuotaExceededError');
-    }
+    if (value.includes(marker)) throw new DOMException('quota', 'QuotaExceededError');
     original.call(this, key, value);
   });
 }
 
-describe('保存容量', () => {
-  it('は退避したことを画面に出す（黙って落とさない）', async () => {
-    const user = userEvent.setup();
-    // 編集後の最初の書き込みだけ失敗させ、サムネイル退避後の再試行は通す。
-    failSetItemContaining('追記');
-    renderApp('/projects/prj-maison/brand');
-
-    await user.type(screen.getByLabelText('トーン＆マナー'), '追記');
-
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/画像の保存を解除しました/);
-  });
-
+describe('保存', () => {
   it('は保存できていないことを画面に出す', async () => {
     const user = userEvent.setup();
-    failSetItemContaining('追記', { alwaysFail: true });
+    failSetItemContaining('追記');
     renderApp('/projects/prj-maison/brand');
 
     await user.type(screen.getByLabelText('トーン＆マナー'), '追記');
@@ -54,15 +37,24 @@ describe('保存容量', () => {
     expect(alert).toHaveTextContent(/変更を保存できていません/);
   });
 
-  it('は設定画面で使用量を可視化する', () => {
+  it('は設定画面で使用量と永続化の状態を可視化する', async () => {
     renderApp('/settings');
 
     const card = screen
       .getByRole('heading', { name: '画像の保存容量' })
       .closest('section') as HTMLElement;
 
-    expect(within(card).getByText(/0KB \/ 2,000KB（0% 使用）/)).toBeInTheDocument();
-    expect(within(card).getByText(/保存済み 0件／参照のみ 0件/)).toBeInTheDocument();
+    expect(within(card).getByText(/0MB 使用/)).toBeInTheDocument();
+    expect(within(card).getByText(/原寸あり 0件／表示用のみ 0件/)).toBeInTheDocument();
+    // jsdom には navigator.storage が無いので「確認できません」側に落ちる。
+    expect(await within(card).findByText(/保存の永続化：/)).toBeInTheDocument();
+  });
+
+  it('はこの環境で画像が永続化されないことを伝える', async () => {
+    renderApp('/settings');
+
+    // jsdom には IndexedDB が無く、メモリ実装に落ちる（リロードで消える）。
+    expect(await screen.findByText(/登録した画像はリロードで失われます/)).toBeInTheDocument();
   });
 });
 
@@ -77,8 +69,8 @@ describe('外部URLの取り込み', () => {
     await user.click(screen.getByRole('button', { name: 'URLから取り込む' }));
 
     expect(await screen.findByText(/画像を取り込めませんでした/)).toBeInTheDocument();
-    // 参照は残るが、成果物に含まれないことを明示する。
-    expect(screen.getAllByText('成果物に含まれません').length).toBeGreaterThan(0);
+    // 参照は残るが、出力に使えないことを明示する。
+    expect(screen.getAllByText('出力に使えません').length).toBeGreaterThan(0);
   });
 
   it('はファイル登録を主動線として示す', async () => {

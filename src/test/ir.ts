@@ -6,7 +6,12 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { defaultSettings, seedPortfolio, seedProjects, seedWorkspaces } from '../data/fixtures';
 import { generateProposalBody } from '../data/proposalBody';
-import type { Asset, Project, Provenance, Workspace } from '../data/types';
+import type { Asset, AssetVariant, Project, Provenance, Workspace } from '../data/types';
+import {
+  createMemoryBinaryStore,
+  variantKey,
+  type AssetBinaryStore,
+} from '../domain/assetStore';
 import { buildProposalIR, type Lang, type ProposalIR } from '../domain/ir';
 
 export const testProject: Project = seedProjects[0];
@@ -14,6 +19,59 @@ export const testProject: Project = seedProjects[0];
 /** 1×1 の赤い PNG。画像埋め込みの経路を通すためだけの最小データ。 */
 export const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** 実体つきのアセット。既定は原寸ありで、表紙以外のスロットなら解像度も足りる大きさ。 */
+export function testAsset(
+  id: string,
+  {
+    origin = 'upload' as Asset['origin'],
+    width = 2000,
+    height = 1500,
+    variants,
+  }: {
+    origin?: Asset['origin'];
+    width?: number;
+    height?: number;
+    /** 明示すると variants をそのまま使う（原寸なし・preview のみ等を作る）。 */
+    variants?: AssetVariant[];
+  } = {},
+): Asset {
+  return {
+    id,
+    origin,
+    label: id,
+    source: origin === 'external' ? 'https://example.com/a.jpg' : `${id}.png`,
+    runId: null,
+    mimeType: 'image/png',
+    createdAt: '',
+    variants: variants ?? [
+      {
+        kind: 'original',
+        key: variantKey(id, 'original'),
+        width,
+        height,
+        bytes: 1000,
+        mimeType: 'image/png',
+      },
+    ],
+  };
+}
+
+/** ムードボードの先頭タイルにアセットを結びつけたワークスペース。 */
+export function workspaceWithAsset(assetId: string): Workspace {
+  const base = workspaceWithBody();
+  return {
+    ...base,
+    moodboard: base.moodboard.map((tile, index) => (index === 0 ? { ...tile, assetId } : tile)),
+  };
+}
+
+/** 実体を積んだメモリストア。テストでは IndexedDB を使わない。 */
+export function storeWith(entries: Record<string, Blob>): AssetBinaryStore {
+  const store = createMemoryBinaryStore();
+  for (const [key, blob] of Object.entries(entries)) void store.put(key, blob);
+  return store;
+}
 
 export function workspaceWithBody(overrides: Partial<Workspace> = {}): Workspace {
   const base = seedWorkspaces[testProject.id];

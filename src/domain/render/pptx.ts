@@ -5,7 +5,7 @@
 
 import PptxGenJS from 'pptxgenjs';
 import type { IRSection, ProposalIR } from '../ir';
-import { assertIrVersion, fileNameFor, warningSummary, type Renderer } from './types';
+import { assertIrVersion, fileNameFor, isDraft, warningSummary, type Renderer } from './types';
 
 const FONT_JA = 'Yu Gothic';
 const INK = '12100E';
@@ -148,7 +148,7 @@ export const pptxRenderer: Renderer = {
 
     const output = await pptx.write({ outputType: 'arraybuffer' });
     return {
-      fileName: fileNameFor(ir, 'pptx'),
+      fileName: fileNameFor(ir, 'pptx', isDraft(ir)),
       mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       bytes: await toBytes(output),
     };
