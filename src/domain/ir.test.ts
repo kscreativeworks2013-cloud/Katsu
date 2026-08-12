@@ -175,3 +175,49 @@ describe('警告', () => {
     expect(ir.warnings.some((warning) => warning.kind === 'external-image')).toBe(true);
   });
 });
+
+describe('外部URL画像の取り込み', () => {
+  const external = (thumbnail?: string): Record<string, Asset> => ({
+    'ast-ext': {
+      id: 'ast-ext',
+      origin: 'external',
+      label: '参考画像',
+      source: 'https://example.com/a.jpg',
+      runId: null,
+      mimeType: 'image/jpeg',
+      createdAt: '',
+      ...(thumbnail ? { thumbnail } : {}),
+    },
+  });
+
+  function irWithExternal(thumbnail?: string) {
+    const base = workspaceWithBody();
+    return buildTestIR({
+      assets: external(thumbnail),
+      workspace: {
+        ...base,
+        moodboard: base.moodboard.map((tile, index) =>
+          index === 0 ? { ...tile, assetId: 'ast-ext' } : tile,
+        ),
+      },
+    });
+  }
+
+  it('は取り込み済みなら埋め込める実体を持ち、警告しない', () => {
+    const ir = irWithExternal(TINY_PNG);
+    const image = ir.sections
+      .flatMap((section) => section.blocks)
+      .find((block) => block.type === 'image' && block.assetOrigin === 'external');
+
+    expect(image).toMatchObject({ data: TINY_PNG, href: 'https://example.com/a.jpg' });
+    expect(ir.warnings.some((warning) => warning.kind === 'external-image')).toBe(false);
+  });
+
+  it('は取り込めていない場合だけ成果物に含まれないと知らせる', () => {
+    const ir = irWithExternal();
+
+    expect(ir.warnings.find((warning) => warning.kind === 'external-image')?.message).toMatch(
+      /取り込めていないため/,
+    );
+  });
+});

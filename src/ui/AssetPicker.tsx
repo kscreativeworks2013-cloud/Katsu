@@ -1,5 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 import { ASSET_ORIGIN_LABEL } from '../domain/assets';
+import { importImageFromUrl } from '../lib/importImage';
 import { useAppStore } from '../store/context';
 import { Badge } from './primitives';
 
@@ -20,21 +21,38 @@ export function AssetPicker({
   const { assets, registerAsset } = useAppStore();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const asset = assetId ? assets[assetId] : undefined;
 
-  function registerUrl() {
+  /**
+   * URL登録時にその場で取り込む（第6章 6-8）。
+   * 取り込めた画像だけが PDF・PowerPoint に入るので、取り込めない場合はここで明示する。
+   */
+  async function registerUrl() {
     const trimmed = url.trim();
     if (!trimmed) return;
+
+    setImporting(true);
+    const outcome = await importImageFromUrl(trimmed);
+    setImporting(false);
+
     const created = registerAsset({
       origin: 'external',
       label,
       source: trimmed,
       runId: null,
-      mimeType: 'image/*',
+      mimeType: outcome.image?.mimeType ?? 'image/*',
+      thumbnail: outcome.image?.dataUri,
     });
     onChange(created.id);
+    setNotice(
+      outcome.image
+        ? null
+        : `画像を取り込めませんでした：${outcome.reason}。参照は残りますが、PDF・PowerPoint には含まれません。`,
+    );
     setUrl('');
     setOpen(false);
   }
@@ -63,17 +81,28 @@ export function AssetPicker({
 
   if (asset) {
     return (
-      <div className="row" style={{ gap: 8 }}>
-        <Badge>{ASSET_ORIGIN_LABEL[asset.origin]}</Badge>
-        <span className="muted">{asset.source}</span>
-        <button
-          className="btn btn--ghost btn--small"
-          type="button"
-          onClick={() => onChange(null)}
-          aria-label={`${label}の画像を解除`}
-        >
-          解除
-        </button>
+      <div className="stack" style={{ gap: 6 }}>
+        <div className="row" style={{ gap: 8 }}>
+          <Badge>{ASSET_ORIGIN_LABEL[asset.origin]}</Badge>
+          <span className="muted">{asset.source}</span>
+          {!asset.thumbnail && <Badge tone="alert">成果物に含まれません</Badge>}
+          <button
+            className="btn btn--ghost btn--small"
+            type="button"
+            onClick={() => {
+              setNotice(null);
+              onChange(null);
+            }}
+            aria-label={`${label}の画像を解除`}
+          >
+            解除
+          </button>
+        </div>
+        {notice && (
+          <p className="form-error" role="status">
+            {notice}
+          </p>
+        )}
       </div>
     );
   }
@@ -106,10 +135,10 @@ export function AssetPicker({
         <button
           className="btn btn--small"
           type="button"
-          onClick={registerUrl}
-          disabled={!url.trim()}
+          onClick={() => void registerUrl()}
+          disabled={!url.trim() || importing}
         >
-          URLを登録
+          {importing ? '取り込み中…' : 'URLを登録'}
         </button>
         <button
           className="btn btn--ghost btn--small"

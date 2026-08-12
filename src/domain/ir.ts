@@ -166,12 +166,13 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
     for (const image of images) {
       const asset = image.asset ?? resolveAsset(input.assets, undefined);
       const isExternal = asset?.origin === 'external';
-      if (isExternal) {
+      // 取り込み済み（実体を持つ）外部画像は埋め込めるので警告しない（第6章 6-8）。
+      if (isExternal && !asset?.thumbnail) {
         warnings.push({
           kind: 'external-image',
           severity: 'info',
           sectionId,
-          message: `${image.caption} は外部URL参照のため、PDF・PowerPoint には埋め込まれません。`,
+          message: `${image.caption} は取り込めていないため、PDF・PowerPoint には含まれません。`,
         });
       }
       blocks.push({
