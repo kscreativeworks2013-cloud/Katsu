@@ -1,6 +1,17 @@
-# Katsu
+# Luxury Beauty Visual Proposal OS
 
-A React + TypeScript web app built with Vite, scaffolded with a full testing setup from the first commit.
+ラグジュアリー／ビューティー領域の広告撮影案件について、案件情報とブランド資料から、企画・提案書・AI生成用プロンプトまでを一貫して作成する統合システム。
+
+リポジトリは**アプリ本体**と**仕様書のドキュメント生成**を分離している。
+
+| ディレクトリ       | 役割                                                             |
+| ------------------ | ---------------------------------------------------------------- |
+| `src/`             | アプリ本体（React + TypeScript + Vite）                          |
+| `docs/spec/`       | 仕様書の原稿（Markdown、1ファイル＝1セクション）                 |
+| `tools/spec-docs/` | `docs/spec/` を PDF / Word / PowerPoint に書き出す Python ツール |
+| `e2e/`             | Playwright のE2Eテスト                                           |
+
+アプリ側は `tools/` を参照せず、ツール側も `src/` を参照しない。片方を変更しても、もう片方のビルドには影響しない。
 
 ## Getting started
 
@@ -9,15 +20,66 @@ npm install
 npm run dev
 ```
 
+## 実装状況
+
+第3章（UI/UX設計）までを実装済み。全13画面が動作する。
+
+| 画面                     | ルート                      |
+| ------------------------ | --------------------------- |
+| ダッシュボード           | `/`                         |
+| 案件一覧                 | `/projects`                 |
+| 新しい案件作成           | `/projects/new`             |
+| ブランド分析             | `/projects/:id/brand`       |
+| 競合分析                 | `/projects/:id/competitors` |
+| 撮影コンセプト           | `/projects/:id/concepts`    |
+| ムードボード             | `/projects/:id/moodboard`   |
+| ショットリスト／絵コンテ | `/projects/:id/shots`       |
+| AIプロンプト生成         | `/projects/:id/prompts`     |
+| 提案書プレビュー         | `/projects/:id/proposal`    |
+| PDF／PowerPoint出力      | `/projects/:id/export`      |
+| ポートフォリオ管理       | `/portfolio`                |
+| 設定                     | `/settings`                 |
+
+現時点の制約（次フェーズで解消する）:
+
+- 永続化層はなく、案件はブラウザのメモリ上にのみ存在する（リロードでシードデータに戻る）。
+- AI生成は `src/data/generate.ts` のモック。案件の入力値から決定的に組み立てているだけで、実モデルは呼んでいない。
+- ファイルのアップロードと実出力は未接続。画面と履歴のみ。
+
+次の実装順は `docs/spec/05-backlog.md` を参照。AIワークフロー → データモデル → Proposal Generator。
+
+## ソース構成
+
+```
+src/
+  app/        アプリシェル、サイドバー、ステッパー、ルート定義
+  screens/    13画面
+  ui/         画面をまたいで使う表示部品
+  store/      案件・生成物・設定のインメモリストア（Context）
+  data/       型、ワークフロー定義、シードデータ、生成モック
+  lib/        純粋関数（進捗計算、絞り込み、整形）
+```
+
+デザイントークン（色・タイポ・余白）は `src/index.css` の CSS 変数に集約している。第3章のデザイン原則に対応するので、色を足すときはまずここを見ること。
+
+## 仕様書の生成
+
+```bash
+pip install -r tools/spec-docs/requirements.txt
+python tools/spec-docs/build_spec_docs.py       # dist/spec-docs/ に PDF / DOCX / PPTX
+```
+
+原稿は `docs/spec/*.md`。書式と日本語まわりの注意は `tools/spec-docs/README.md` に書いてある。
+
 ## Testing
 
 The suite is split into three layers. Each has a worked example in the repo — copy the nearest one when adding tests.
 
-| Layer      | Runner                   | Lives in               | Example                  |
-| ---------- | ------------------------ | ---------------------- | ------------------------ |
-| Unit       | Vitest                   | beside the source file | `src/lib/format.test.ts` |
-| Component  | Vitest + Testing Library | beside the component   | `src/App.test.tsx`       |
-| End-to-end | Playwright               | `e2e/`                 | `e2e/smoke.spec.ts`      |
+| Layer      | Runner                   | Lives in               | Example                            |
+| ---------- | ------------------------ | ---------------------- | ---------------------------------- |
+| Unit       | Vitest                   | beside the source file | `src/lib/projects.test.ts`         |
+| Component  | Vitest + Testing Library | beside the component   | `src/screens/ProjectList.test.tsx` |
+| End-to-end | Playwright               | `e2e/`                 | `e2e/smoke.spec.ts`                |
 
 ```bash
 npm test              # unit + component, single run
@@ -30,7 +92,8 @@ npm run test:e2e      # end-to-end against a production build
 
 - **Query like a user.** Component tests use accessible roles and labels (`getByRole`, `getByLabelText`) rather than CSS classes or test ids. If an element is hard to query, that is usually an accessibility bug worth fixing rather than a reason to reach for a test id.
 - **Interact with `userEvent`, not `fireEvent`.** It fires the realistic event sequence, so focus and keyboard behaviour get exercised too.
-- **Keep e2e thin.** The Playwright suite covers wiring — the app boots, renders, and responds in a real browser. Detailed behaviour belongs in the much faster component tests.
+- **Mount through the router.** `src/test/render.tsx` boots the whole app at a given URL with the store and routes attached, so component tests exercise navigation the way the app really works.
+- **Keep e2e thin.** The Playwright suite covers wiring — the app boots, routes, and responds in a real browser. Detailed behaviour belongs in the much faster component tests.
 - **E2E runs against the production build,** so it catches bundling and asset problems the dev server would hide.
 
 ### Coverage

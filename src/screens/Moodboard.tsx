@@ -1,0 +1,190 @@
+import type { CSSProperties } from 'react';
+import { useParams } from 'react-router-dom';
+import type { MoodCategory, MoodTile } from '../data/types';
+import { MOOD_CATEGORY_LABEL } from '../data/workflow';
+import { createId } from '../lib/projects';
+import { useAppStore, useProject } from '../store/context';
+import { Card, EmptyState, PageHeader, Skeleton, Swatches } from '../ui/primitives';
+
+const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
+
+/** 3-7 ムードボード：採用コンセプトを光・質感・色・構図の4章立てに翻訳する。 */
+export function MoodboardScreen() {
+  const { projectId = '' } = useParams();
+  const { project, workspace } = useProject(projectId);
+  const { runStep, updateWorkspace, generating } = useAppStore();
+
+  if (!project || !workspace) return null;
+
+  const busy = generating === `${projectId}:moodboard`;
+  const tiles = workspace.moodboard;
+
+  function write(next: MoodTile[]) {
+    updateWorkspace(projectId, { moodboard: next });
+  }
+
+  function addTile(category: MoodCategory) {
+    const palette = workspace?.brand?.palette ?? [];
+    write([
+      ...tiles,
+      {
+        id: createId('mood'),
+        category,
+        caption: '新しいタイル',
+        source: '手動追加',
+        from: palette[0]?.hex ?? '#E6E0D6',
+        to: palette[2]?.hex ?? '#B3936A',
+      },
+    ]);
+  }
+
+  /**
+   * 並べ替え。ドラッグ操作は次フェーズで載せる前提で、
+   * まずキーボードでも使える前後移動を用意している。
+   */
+  function move(tileId: string, direction: -1 | 1) {
+    const index = tiles.findIndex((tile) => tile.id === tileId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= tiles.length) return;
+    const next = [...tiles];
+    [next[index], next[target]] = [next[target], next[index]];
+    write(next);
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="ムードボード"
+        lead="タイルはそのまま提案書のムードボード頁に引き継がれます。"
+        actions={
+          <button
+            className="btn"
+            type="button"
+            onClick={() => runStep(projectId, 'moodboard')}
+            disabled={busy}
+          >
+            {busy ? '生成中…' : tiles.length > 0 ? '構成案を追加生成' : 'AIで生成'}
+          </button>
+        }
+      />
+
+      {busy && (
+        <Card>
+          <Skeleton lines={4} />
+        </Card>
+      )}
+
+      {!busy && tiles.length === 0 && (
+        <Card>
+          <EmptyState
+            title="ボードが空です"
+            description="採用コンセプトから、光・質感・色・構図の4章立てで構成案を作ります。"
+            action={
+              <button
+                className="btn"
+                type="button"
+                onClick={() => runStep(projectId, 'moodboard')}
+              >
+                AIで生成する
+              </button>
+            }
+          />
+        </Card>
+      )}
+
+      {!busy && tiles.length > 0 && (
+        <>
+          {workspace.brand && (
+            <Card title="カラーパレット">
+              <Swatches colors={workspace.brand.palette} />
+            </Card>
+          )}
+
+          {CATEGORIES.map((category) => {
+            const rows = tiles.filter((tile) => tile.category === category);
+            return (
+              <Card
+                key={category}
+                title={MOOD_CATEGORY_LABEL[category]}
+                actions={
+                  <button
+                    className="btn btn--ghost btn--small"
+                    type="button"
+                    onClick={() => addTile(category)}
+                  >
+                    タイルを追加
+                  </button>
+                }
+              >
+                {rows.length === 0 ? (
+                  <p className="muted">この章のタイルはまだありません。</p>
+                ) : (
+                  <div className="grid grid--4">
+                    {rows.map((tile) => (
+                      <figure className="tile" key={tile.id} style={{ margin: 0 }}>
+                        <div
+                          className="tile-art"
+                          style={
+                            {
+                              '--from': tile.from,
+                              '--to': tile.to,
+                            } as CSSProperties
+                          }
+                          aria-hidden="true"
+                        />
+                        <figcaption className="tile-body">
+                          <label className="field">
+                            <span className="visually-hidden">キャプション</span>
+                            <input
+                              value={tile.caption}
+                              onChange={(event) =>
+                                write(
+                                  tiles.map((row) =>
+                                    row.id === tile.id
+                                      ? { ...row, caption: event.target.value }
+                                      : row,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <p>出典：{tile.source}</p>
+                          <div className="actions" style={{ marginTop: 8 }}>
+                            <button
+                              className="btn btn--ghost btn--small"
+                              type="button"
+                              onClick={() => move(tile.id, -1)}
+                              aria-label={`${tile.caption} を前へ`}
+                            >
+                              ←
+                            </button>
+                            <button
+                              className="btn btn--ghost btn--small"
+                              type="button"
+                              onClick={() => move(tile.id, 1)}
+                              aria-label={`${tile.caption} を後ろへ`}
+                            >
+                              →
+                            </button>
+                            <button
+                              className="btn btn--ghost btn--small"
+                              type="button"
+                              onClick={() => write(tiles.filter((row) => row.id !== tile.id))}
+                              aria-label={`${tile.caption} を削除`}
+                            >
+                              削除
+                            </button>
+                          </div>
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </>
+      )}
+    </>
+  );
+}

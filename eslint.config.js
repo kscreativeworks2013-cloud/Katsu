@@ -20,10 +20,22 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // UI文言は日本語なので、全角スペース（U+3000）は表示テキストとして正当。
+      // コードとして紛れ込むのは防ぎたいので、文字列・テンプレート・JSXテキストのみ許可する。
+      'no-irregular-whitespace': [
+        'error',
+        { skipStrings: true, skipTemplates: true, skipJSXText: true },
+      ],
     },
   },
   {
     files: ['e2e/**/*.ts', '*.config.ts'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // Test helpers export render functions, not components — Fast Refresh does
+    // not apply to them.
+    files: ['src/test/**/*.tsx', 'src/**/*.test.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 );
