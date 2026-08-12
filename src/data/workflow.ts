@@ -1,27 +1,11 @@
-import type {
-  ExportFormat,
-  Language,
-  ProjectStatus,
-  PromptTarget,
-  StepId,
-  StepStatus,
-} from './types';
+import type { ExportFormat, Language, ProjectStatus, PromptTarget, StepStatus } from './types';
 
-/** 第3章 ワークフローステッパーの8ステップ。並び順がそのまま画面順。 */
-export const WORKFLOW_STEPS: { id: StepId; label: string; segment: string }[] = [
-  { id: 'brand', label: 'ブランド分析', segment: 'brand' },
-  { id: 'competitors', label: '競合分析', segment: 'competitors' },
-  { id: 'concepts', label: 'コンセプト', segment: 'concepts' },
-  { id: 'moodboard', label: 'ムードボード', segment: 'moodboard' },
-  { id: 'shots', label: 'ショットリスト／絵コンテ', segment: 'shots' },
-  { id: 'prompts', label: 'AIプロンプト', segment: 'prompts' },
-  { id: 'proposal', label: '提案書プレビュー', segment: 'proposal' },
-  { id: 'export', label: '出力', segment: 'export' },
-];
+// ステップ定義（順序・依存・出力フィールド）は src/domain/steps.ts にある。
+// この module は表示用のラベルと選択肢だけを持つ。
 
 export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
   todo: '未着手',
-  in_progress: '進行中',
+  running: '生成中',
   done: '完了',
 };
 

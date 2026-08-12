@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
-import type { BrandAnalysis as BrandAnalysisData } from '../data/types';
-import { useAppStore, useProject } from '../store/context';
+import { isProtected } from '../domain/provenance';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import {
   Badge,
   Card,
@@ -12,16 +12,27 @@ import {
   Swatches,
 } from '../ui/primitives';
 
+/**
+ * 手動編集済みのフィールドに付ける印。再生成時はこの印が保護の根拠になる。
+ * ラベルの外に置く：中に入れると入力欄のアクセシブル名にこの文言が混ざる。
+ */
+function EditedMark({ edited }: { edited: boolean }) {
+  if (!edited) return null;
+  return <p className="muted">手動編集済み（再生成から保護）</p>;
+}
+
 /** 3-4 ブランド分析：資料から世界観・トーン・ターゲット・ビジュアルコードを抽出する。 */
 export function BrandAnalysisScreen() {
   const { projectId = '' } = useParams();
-  const { project, workspace } = useProject(projectId);
-  const { runStep, updateWorkspace, generating } = useAppStore();
+  const { project, workspace, provenance } = useProject(projectId);
+  const { requestRun, editField, pendingRun } = useAppStore();
+  const busy = useIsRunning(projectId, 'brand');
 
   if (!project || !workspace) return null;
 
-  const busy = generating === `${projectId}:brand`;
   const brand = workspace.brand;
+  const hasBrand = brand !== undefined;
+  const blocked = pendingRun !== null;
 
   const sources = [
     { label: 'ブランドURL', value: project.brandUrl },
@@ -30,28 +41,19 @@ export function BrandAnalysisScreen() {
     ...project.references.map((reference) => ({ label: '参考資料', value: reference })),
   ];
 
-  /** 手動編集は編集済みとして記録し、再生成時の上書き確認に使う。 */
-  function edit(patch: Partial<BrandAnalysisData>, field: string) {
-    if (!brand) return;
-    const editedFields = brand.editedFields.includes(field)
-      ? brand.editedFields
-      : [...brand.editedFields, field];
-    updateWorkspace(projectId, { brand: { ...brand, ...patch, editedFields } });
-  }
-
   return (
     <>
       <PageHeader
         title="ブランド分析"
-        lead="ブランド資料から抽出した内容です。すべて手動で上書きできます。"
+        lead="ブランド資料から抽出した内容です。手動編集した項目は再生成から保護されます。"
         actions={
           <button
             className="btn"
             type="button"
-            onClick={() => runStep(projectId, 'brand')}
-            disabled={busy}
+            onClick={() => requestRun(projectId, 'brand')}
+            disabled={blocked}
           >
-            {busy ? '解析中…' : brand ? 'AIで再解析' : 'AIで解析'}
+            {busy ? '解析中…' : hasBrand ? 'AIで再解析' : 'AIで解析'}
           </button>
         }
       />
@@ -68,8 +70,8 @@ export function BrandAnalysisScreen() {
               .filter((source) => source.value)
               .map((source, index) => (
                 <li className="row" key={`${source.label}-${index}`}>
-                  <Badge tone={brand ? 'done' : 'neutral'}>
-                    {brand ? '読み込み済み' : '未読み込み'}
+                  <Badge tone={hasBrand ? 'done' : 'neutral'}>
+                    {hasBrand ? '読み込み済み' : '未読み込み'}
                   </Badge>
                   <span className="muted">{source.label}</span>
                   <span>{source.value}</span>
@@ -85,13 +87,18 @@ export function BrandAnalysisScreen() {
         </Card>
       )}
 
-      {!busy && !brand && (
+      {!busy && !hasBrand && (
         <Card title="抽出結果">
           <EmptyState
             title="まだ解析していません"
             description="登録済みのブランド資料と案件情報から、世界観・トーン・ビジュアルコードを抽出します。"
             action={
-              <button className="btn" type="button" onClick={() => runStep(projectId, 'brand')}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => requestRun(projectId, 'brand')}
+                disabled={blocked}
+              >
                 AIで解析する
               </button>
             }
@@ -103,41 +110,52 @@ export function BrandAnalysisScreen() {
         <>
           <Card
             title="抽出結果"
-            description="編集した項目には「手動更新」が付き、再生成時に確認を挟みます。"
+            description="編集するとその項目は手動編集済みになり、再生成では上書きされません。"
           >
             <div className="grid grid--2">
-              <Field label="ブランドの世界観">
-                <textarea
-                  value={brand.worldview}
-                  onChange={(event) => edit({ worldview: event.target.value }, 'worldview')}
-                />
-              </Field>
-              <Field label="トーン＆マナー">
-                <textarea
-                  value={brand.tone}
-                  onChange={(event) => edit({ tone: event.target.value }, 'tone')}
-                />
-              </Field>
-              <Field label="ターゲット顧客">
-                <textarea
-                  value={brand.target}
-                  onChange={(event) => edit({ target: event.target.value }, 'target')}
-                />
-              </Field>
-              <Field label="表現上の制約／NG事項" hint="1行に1件">
-                <textarea
-                  value={brand.constraints.join('\n')}
-                  onChange={(event) =>
-                    edit({ constraints: event.target.value.split('\n') }, 'constraints')
-                  }
-                />
-              </Field>
+              <div className="stack" style={{ gap: 4 }}>
+                <Field label="ブランドの世界観">
+                  <textarea
+                    value={brand.worldview}
+                    onChange={(event) =>
+                      editField(projectId, 'brand.worldview', event.target.value)
+                    }
+                  />
+                </Field>
+                <EditedMark edited={isProtected(provenance, 'brand.worldview')} />
+              </div>
+              <div className="stack" style={{ gap: 4 }}>
+                <Field label="トーン＆マナー">
+                  <textarea
+                    value={brand.tone}
+                    onChange={(event) => editField(projectId, 'brand.tone', event.target.value)}
+                  />
+                </Field>
+                <EditedMark edited={isProtected(provenance, 'brand.tone')} />
+              </div>
+              <div className="stack" style={{ gap: 4 }}>
+                <Field label="ターゲット顧客">
+                  <textarea
+                    value={brand.target}
+                    onChange={(event) =>
+                      editField(projectId, 'brand.target', event.target.value)
+                    }
+                  />
+                </Field>
+                <EditedMark edited={isProtected(provenance, 'brand.target')} />
+              </div>
+              <div className="stack" style={{ gap: 4 }}>
+                <Field label="表現上の制約／NG事項" hint="1行に1件">
+                  <textarea
+                    value={brand.constraints.join('\n')}
+                    onChange={(event) =>
+                      editField(projectId, 'brand.constraints', event.target.value.split('\n'))
+                    }
+                  />
+                </Field>
+                <EditedMark edited={isProtected(provenance, 'brand.constraints')} />
+              </div>
             </div>
-            {brand.editedFields.length > 0 && (
-              <p className="muted" style={{ marginTop: 14 }}>
-                手動更新：{brand.editedFields.join('、')}
-              </p>
-            )}
           </Card>
 
           <div className="grid grid--2">

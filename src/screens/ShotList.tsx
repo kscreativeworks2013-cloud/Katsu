@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { Shot } from '../data/types';
 import { createId } from '../lib/projects';
-import { useAppStore, useProject } from '../store/context';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import { Badge, Card, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
 const PRIORITY_LABEL: Record<Shot['priority'], string> = {
@@ -15,12 +15,12 @@ const PRIORITY_LABEL: Record<Shot['priority'], string> = {
 export function ShotListScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { runStep, updateWorkspace, generating } = useAppStore();
+  const { requestRun, editField, pendingRun } = useAppStore();
+  const busy = useIsRunning(projectId, 'shots');
   const [view, setView] = useState<'list' | 'board'>('list');
 
   if (!project || !workspace) return null;
 
-  const busy = generating === `${projectId}:shots`;
   const shots = workspace.shots;
 
   /** 必須カットがリストに現れているか（第3章 3-8 の警告表示）。 */
@@ -29,9 +29,12 @@ export function ShotListScreen() {
   );
 
   function write(next: Shot[]) {
-    updateWorkspace(projectId, {
-      shots: next.map((shot, index) => ({ ...shot, no: index + 1 })),
-    });
+    // 行の編集・並べ替え・削除は手動編集。以降このコレクションは再生成から保護される。
+    editField(
+      projectId,
+      'shots.list',
+      next.map((shot, index) => ({ ...shot, no: index + 1 })),
+    );
   }
 
   function duplicate(shotId: string) {
@@ -59,8 +62,8 @@ export function ShotListScreen() {
           <button
             className="btn"
             type="button"
-            onClick={() => runStep(projectId, 'shots')}
-            disabled={busy}
+            onClick={() => requestRun(projectId, 'shots')}
+            disabled={pendingRun !== null}
           >
             {busy ? '生成中…' : shots.length > 0 ? 'カットを追加生成' : 'AIで生成'}
           </button>
@@ -79,7 +82,12 @@ export function ShotListScreen() {
             title="カットがまだありません"
             description="採用コンセプトと必須カットから、撮影単位のショットリストを作ります。"
             action={
-              <button className="btn" type="button" onClick={() => runStep(projectId, 'shots')}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => requestRun(projectId, 'shots')}
+                disabled={pendingRun !== null}
+              >
                 AIで生成する
               </button>
             }

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { ExportFormat, ExportRecord, Language } from '../data/types';
 import { EXPORT_FORMAT_LABEL, LANGUAGE_LABEL } from '../data/workflow';
 import { createId, formatDate } from '../lib/projects';
+import { staleStepLabels } from '../lib/projects';
 import { useAppStore, useProject } from '../store/context';
 import { Badge, Card, EmptyState, Field, PageHeader } from '../ui/primitives';
 
@@ -18,15 +19,17 @@ const EXTENSION: Record<ExportFormat, string> = {
 export function ExportScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { updateWorkspace, setStepStatus } = useAppStore();
+  const { recordExports } = useAppStore();
   const [formats, setFormats] = useState<ExportFormat[]>(['pdf', 'pptx']);
   const [language, setLanguage] = useState<Language>('both');
   const [template, setTemplate] = useState('standard');
   const [running, setRunning] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   if (!project || !workspace) return null;
 
   const history = workspace.exports;
+  const stale = staleStepLabels(project.steps);
 
   function toggleFormat(format: ExportFormat) {
     setFormats((current) =>
@@ -36,8 +39,16 @@ export function ExportScreen() {
     );
   }
 
-  function run() {
+  function run(skipStaleCheck = false) {
     if (formats.length === 0 || !project) return;
+
+    // 古い章があっても出力自体はブロックしない。確認だけ挟む（第4章 4-4）。
+    if (stale.length > 0 && !skipStaleCheck) {
+      setConfirming(true);
+      return;
+    }
+
+    setConfirming(false);
     setRunning(true);
     const languages: Language[] = language === 'both' ? ['ja', 'en'] : [language];
     const stamp = new Date().toISOString().slice(0, 10);
@@ -53,8 +64,7 @@ export function ExportScreen() {
 
     // 実ファイル生成は Proposal Generator フェーズで接続する。ここでは履歴だけを進める。
     setTimeout(() => {
-      updateWorkspace(projectId, { exports: [...created, ...history] });
-      setStepStatus(projectId, 'export', 'done');
+      recordExports(projectId, created);
       setRunning(false);
     }, 600);
   }
@@ -109,7 +119,7 @@ export function ExportScreen() {
           <button
             className="btn"
             type="button"
-            onClick={run}
+            onClick={() => run()}
             disabled={running || formats.length === 0}
           >
             {running ? '出力中…' : '出力を実行'}
@@ -123,6 +133,24 @@ export function ExportScreen() {
           </span>
         </div>
       </Card>
+
+      {confirming && (
+        <Card title="古い内容のまま出力しますか">
+          <p className="lede">上流の変更が反映されていない章があります：{stale.join('、')}</p>
+          <div className="actions" style={{ marginTop: 16 }}>
+            <button className="btn" type="button" onClick={() => run(true)}>
+              このまま出力する
+            </button>
+            <button
+              className="btn btn--ghost"
+              type="button"
+              onClick={() => setConfirming(false)}
+            >
+              やめる
+            </button>
+          </div>
+        </Card>
+      )}
 
       <Card title="出力履歴">
         {history.length === 0 ? (

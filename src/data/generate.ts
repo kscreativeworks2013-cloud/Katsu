@@ -1,9 +1,11 @@
 /*
- * 生成物のモック生成。第2章のAIワークフロー各ステップに対応する関数を並べている。
- * 実際のAI呼び出しは次フェーズ（AIワークフロー設計）で差し替える前提のため、
- * ここでは案件の入力値から決定的に組み立てるだけにしてある（同じ入力なら常に同じ結果）。
+ * 生成物の組み立て。第2章のAIワークフロー各ステップに対応する関数を並べている。
+ * 案件の入力値から決定的に組み立てる（同じ入力なら常に同じ結果）ため、
+ * 実モデル接続後もテストダブル（src/engine/mockEngine.ts）の中身として恒久的に使う。
+ * 第4章 4-6 のとおり、このファイルは削除しない。
  */
 
+import { adoptedConcept } from '../domain/steps';
 import type {
   BrandAnalysis,
   Competitor,
@@ -12,6 +14,7 @@ import type {
   MoodTile,
   Project,
   PromptTarget,
+  Provenance,
   Shot,
   Workspace,
 } from './types';
@@ -45,7 +48,6 @@ export function generateBrand(project: Project): BrandAnalysis {
       project.ngNotes.length > 0
         ? project.ngNotes
         : ['過度なレタッチによる質感の消失', 'ブランドカラー以外の強い色の使用'],
-    editedFields: [],
   };
 }
 
@@ -120,7 +122,6 @@ export function generateConcepts(project: Project): Concept[] {
       direction: '面光源＋レフ1枚。無彩色背景に暖色の反射を1点だけ置く。',
       keywords: ['静謐', '斜光', '余白'],
       cutCount: 12,
-      adopted: false,
     },
     {
       id: 'cpt-2',
@@ -130,7 +131,6 @@ export function generateConcepts(project: Project): Concept[] {
       direction: 'マクロ中心。ハイライトは硬め、シャドウは持ち上げてマットに。',
       keywords: ['質感', 'マクロ', '透明感'],
       cutCount: 14,
-      adopted: false,
     },
     {
       id: 'cpt-3',
@@ -140,7 +140,6 @@ export function generateConcepts(project: Project): Concept[] {
       direction: '固定カメラ、シンメトリー構図。色数を3色に絞る。',
       keywords: ['儀式', '様式', 'シンメトリー'],
       cutCount: 10,
-      adopted: false,
     },
   ];
 }
@@ -238,7 +237,7 @@ export function generatePrompt(
   target: PromptTarget,
   shot?: Shot,
 ): string {
-  const concept = workspace.concepts.find((item) => item.adopted) ?? workspace.concepts[0];
+  const concept = adoptedConcept(workspace) ?? workspace.concepts[0];
   const palette = paletteOf(project).join(', ');
   const subject = shot?.subject ?? project.productName ?? project.genre;
   const lighting = shot?.lighting ?? project.creative.lighting ?? 'soft diffused light';
@@ -318,6 +317,7 @@ export function emptyWorkspace(): Workspace {
     competitors: [],
     differentiators: [],
     concepts: [],
+    adoptedConceptId: null,
     moodboard: [],
     shots: [],
     prompts: {},
@@ -325,21 +325,57 @@ export function emptyWorkspace(): Workspace {
   };
 }
 
-/** 生成済みの案件（シードデータ）用に、全ステップ分をまとめて組み立てる。 */
-export function fullWorkspace(project: Project, adoptedConceptIndex = 0): Workspace {
+/**
+ * 生成済みの案件（シードデータ）用に、全ステップ分をまとめて組み立てる。
+ * シードも実行時の生成と同じく provenance を持つ。持たないと、シード案件に対する
+ * 再生成が「未生成からの生成」と区別できなくなる。
+ */
+export function fullWorkspace(
+  project: Project,
+  adoptedConceptIndex = 0,
+  runId = `run-seed-${project.id}`,
+  at = new Date().toISOString(),
+): { workspace: Workspace; provenance: Provenance } {
   const { competitors, differentiators } = generateCompetitors(project);
-  const concepts = generateConcepts(project).map((concept, index) => ({
-    ...concept,
-    adopted: index === adoptedConceptIndex,
-  }));
-  return {
-    brand: generateBrand(project),
+  const concepts = generateConcepts(project);
+  const brand = generateBrand(project);
+  const moodboard = generateMoodboard(project);
+  const shots = generateShots(project);
+
+  const workspace: Workspace = {
+    brand,
     competitors,
     differentiators,
     concepts,
-    moodboard: generateMoodboard(project),
-    shots: generateShots(project),
+    adoptedConceptId: concepts[adoptedConceptIndex]?.id ?? null,
+    moodboard,
+    shots,
     prompts: {},
     exports: [],
+  };
+
+  const generatedPaths = [
+    'brand.worldview',
+    'brand.tone',
+    'brand.target',
+    'brand.visualCodes',
+    'brand.keywords',
+    'brand.palette',
+    'brand.constraints',
+    'competitors.list',
+    'competitors.differentiators',
+    'concepts.list',
+    'moodboard.tiles',
+    'shots.list',
+  ];
+
+  return {
+    workspace,
+    provenance: Object.fromEntries(
+      generatedPaths.map((path) => [
+        path,
+        { origin: 'generated' as const, runId, updatedAt: at },
+      ]),
+    ),
   };
 }

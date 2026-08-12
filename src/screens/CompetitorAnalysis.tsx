@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { useAppStore, useProject } from '../store/context';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import { Card, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
 const MAP_SIZE = { width: 520, height: 360, pad: 44 };
@@ -8,11 +8,11 @@ const MAP_SIZE = { width: 520, height: 360, pad: 44 };
 export function CompetitorAnalysisScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { runStep, updateWorkspace, generating } = useAppStore();
+  const { requestRun, editField, pendingRun } = useAppStore();
+  const busy = useIsRunning(projectId, 'competitors');
 
   if (!project || !workspace) return null;
 
-  const busy = generating === `${projectId}:competitors`;
   const { competitors, differentiators } = workspace;
 
   const toX = (value: number) => MAP_SIZE.pad + value * (MAP_SIZE.width - MAP_SIZE.pad * 2);
@@ -28,8 +28,8 @@ export function CompetitorAnalysisScreen() {
           <button
             className="btn"
             type="button"
-            onClick={() => runStep(projectId, 'competitors')}
-            disabled={busy}
+            onClick={() => requestRun(projectId, 'competitors')}
+            disabled={pendingRun !== null}
           >
             {busy ? '分析中…' : competitors.length > 0 ? '再分析' : 'AIで分析'}
           </button>
@@ -51,7 +51,8 @@ export function CompetitorAnalysisScreen() {
               <button
                 className="btn"
                 type="button"
-                onClick={() => runStep(projectId, 'competitors')}
+                onClick={() => requestRun(projectId, 'competitors')}
+                disabled={pendingRun !== null}
               >
                 AIで分析する
               </button>
@@ -180,11 +181,13 @@ export function CompetitorAnalysisScreen() {
                     type="checkbox"
                     checked={item.adopted}
                     onChange={() =>
-                      updateWorkspace(projectId, {
-                        differentiators: differentiators.map((row) =>
+                      editField(
+                        projectId,
+                        'competitors.differentiators',
+                        differentiators.map((row) =>
                           row.id === item.id ? { ...row, adopted: !row.adopted } : row,
                         ),
-                      })
+                      )
                     }
                   />
                   {item.text}

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ProjectStatus } from '../data/types';
-import { GENRES, PROJECT_STATUS_LABEL, WORKFLOW_STEPS } from '../data/workflow';
+import { GENRES, PROJECT_STATUS_LABEL } from '../data/workflow';
+import { WORKFLOW_STEPS } from '../domain/steps';
 import {
   currentStep,
   filterProjects,

@@ -1,10 +1,10 @@
 /*
- * UI層のビューモデル。第2章の入力フォーマットと第3章の各画面が必要とする形だけを定義する。
- * 永続化を伴う正式なデータモデルは次フェーズ（データモデル設計）で別途定義し、
- * ここはその移行までの暫定型として扱う。
+ * ビューモデルと、第4章のデータモデル（provenance／Run／StepRecord）。
+ * 生成物は「値」と「その値がどこから来たか」を分けて持つ。上書き可否と差分提示は
+ * すべて provenance を根拠に決まる（第4章 4-1、4-3）。
  */
 
-/** 案件内ワークフローの8ステップ（第3章 ワークフローステッパー）。 */
+/** 案件内ワークフローのステップ。第4章 4-8 のとおり、この構成は暫定で変更を許容する。 */
 export type StepId =
   | 'brand'
   | 'competitors'
@@ -15,7 +15,46 @@ export type StepId =
   | 'proposal'
   | 'export';
 
-export type StepStatus = 'todo' | 'in_progress' | 'done';
+export type StepStatus = 'todo' | 'running' | 'done';
+
+/** フィールドの出自。第4章 4-1。 */
+export type FieldOrigin = 'generated' | 'edited' | 'empty';
+
+export interface FieldMeta {
+  origin: FieldOrigin;
+  /** そのフィールドを書いた生成ラインID。手動編集時は編集直前の runId を保持する。 */
+  runId: string | null;
+  updatedAt: string;
+}
+
+/** フィールドパス（例 'brand.tone'、'shots.list'）をキーにしたメタデータ。 */
+export type Provenance = Record<string, FieldMeta>;
+
+export type RunStatus = 'running' | 'applied' | 'discarded' | 'failed';
+
+export interface Run {
+  id: string;
+  projectId: string;
+  stepId: StepId;
+  startedAt: string;
+  finishedAt: string | null;
+  status: RunStatus;
+  /** 生成に使った入力の要約。上流変更の検知に使う。 */
+  inputsHash: string;
+  /** 使用したエンジン識別子（実モデル／テストダブル）。 */
+  engine: string;
+  /** 適用したフィールドパス。applied のときのみ。 */
+  appliedFields?: string[];
+}
+
+export interface StepRecord {
+  status: StepStatus;
+  lastRunId: string | null;
+  /** 上流の再生成により内容が古い可能性がある状態。データは無効化しない（第4章 4-4）。 */
+  stale: boolean;
+  staleSince?: string;
+  staleCause?: StepId;
+}
 
 export type ProjectStatus = 'draft' | 'in_progress' | 'review' | 'delivered';
 
@@ -71,7 +110,7 @@ export interface Project {
   creative: Creative;
   production: Production;
   outputs: string[];
-  steps: Record<StepId, StepStatus>;
+  steps: Record<StepId, StepRecord>;
   updatedAt: string;
 }
 
@@ -83,8 +122,6 @@ export interface BrandAnalysis {
   keywords: string[];
   palette: { name: string; hex: string }[];
   constraints: string[];
-  /** 手動で編集された項目。再生成時の上書き確認に使う。 */
-  editedFields: string[];
 }
 
 export interface Competitor {
@@ -114,7 +151,6 @@ export interface Concept {
   direction: string;
   keywords: string[];
   cutCount: number;
-  adopted: boolean;
 }
 
 export type MoodCategory = 'light' | 'texture' | 'color' | 'composition';
@@ -149,12 +185,16 @@ export interface ExportRecord {
   createdAt: string;
 }
 
-/** 案件ごとの生成物。未生成の項目は undefined／空配列で「空状態」を表す。 */
+/**
+ * 案件ごとの生成物。未生成の項目は undefined／空配列で「空状態」を表す。
+ * adoptedConceptId は生成物ではなく利用者の選択なので、コンセプト再生成では保護対象にしない。
+ */
 export interface Workspace {
   brand?: BrandAnalysis;
   competitors: Competitor[];
   differentiators: Differentiator[];
   concepts: Concept[];
+  adoptedConceptId: string | null;
   moodboard: MoodTile[];
   shots: Shot[];
   prompts: Partial<Record<PromptTarget, string>>;

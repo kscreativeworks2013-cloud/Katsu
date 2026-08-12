@@ -1,5 +1,5 @@
 import { NavLink, useMatch } from 'react-router-dom';
-import { WORKFLOW_STEPS } from '../data/workflow';
+import { WORKFLOW_STEPS } from '../domain/steps';
 import { useAppStore } from '../store/context';
 
 const GLOBAL_LINKS = [
@@ -49,10 +49,16 @@ export function Sidebar() {
               className="nav-link"
             >
               {step.label}
-              {activeProject.steps[step.id] === 'done' && (
-                <span className="nav-step-mark" aria-label="完了">
-                  ✓
+              {activeProject.steps[step.id].stale ? (
+                <span className="nav-step-mark" aria-label="要確認">
+                  !
                 </span>
+              ) : (
+                activeProject.steps[step.id].status === 'done' && (
+                  <span className="nav-step-mark" aria-label="完了">
+                    ✓
+                  </span>
+                )
               )}
             </NavLink>
           ))}

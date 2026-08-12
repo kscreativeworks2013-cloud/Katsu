@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { MoodCategory, MoodTile } from '../data/types';
 import { MOOD_CATEGORY_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
-import { useAppStore, useProject } from '../store/context';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import { Card, EmptyState, PageHeader, Skeleton, Swatches } from '../ui/primitives';
 
 const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
@@ -12,15 +12,16 @@ const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
 export function MoodboardScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { runStep, updateWorkspace, generating } = useAppStore();
+  const { requestRun, editField, pendingRun } = useAppStore();
+  const busy = useIsRunning(projectId, 'moodboard');
 
   if (!project || !workspace) return null;
 
-  const busy = generating === `${projectId}:moodboard`;
   const tiles = workspace.moodboard;
 
   function write(next: MoodTile[]) {
-    updateWorkspace(projectId, { moodboard: next });
+    // タイルの追加・編集・並べ替えは手動編集。以降このコレクションは再生成から保護される。
+    editField(projectId, 'moodboard.tiles', next);
   }
 
   function addTile(category: MoodCategory) {
@@ -60,8 +61,8 @@ export function MoodboardScreen() {
           <button
             className="btn"
             type="button"
-            onClick={() => runStep(projectId, 'moodboard')}
-            disabled={busy}
+            onClick={() => requestRun(projectId, 'moodboard')}
+            disabled={pendingRun !== null}
           >
             {busy ? '生成中…' : tiles.length > 0 ? '構成案を追加生成' : 'AIで生成'}
           </button>
@@ -83,7 +84,8 @@ export function MoodboardScreen() {
               <button
                 className="btn"
                 type="button"
-                onClick={() => runStep(projectId, 'moodboard')}
+                onClick={() => requestRun(projectId, 'moodboard')}
+                disabled={pendingRun !== null}
               >
                 AIで生成する
               </button>

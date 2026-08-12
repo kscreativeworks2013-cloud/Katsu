@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { EXPORT_FORMAT_LABEL, PROJECT_STATUS_LABEL, WORKFLOW_STEPS } from '../data/workflow';
+import { EXPORT_FORMAT_LABEL, PROJECT_STATUS_LABEL } from '../data/workflow';
+import { WORKFLOW_STEPS } from '../domain/steps';
 import { currentStep, dueThisWeek, formatDate, workflowProgress } from '../lib/projects';
 import { useAppStore } from '../store/context';
 import { Badge, Card, EmptyState, PageHeader, Stat } from '../ui/primitives';
@@ -16,7 +17,9 @@ export function Dashboard() {
       workspace.exports.map((record) => ({ ...record, projectId })),
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const proposals = projects.filter((project) => project.steps.proposal !== 'todo').length;
+  const proposals = projects.filter(
+    (project) => project.steps.proposal.status !== 'todo',
+  ).length;
 
   return (
     <>

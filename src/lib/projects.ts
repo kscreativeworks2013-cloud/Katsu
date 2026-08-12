@@ -3,32 +3,41 @@
  * 端のケースはここでテストする。
  */
 
-import type { Project, StepId, StepStatus } from '../data/types';
-import { WORKFLOW_STEPS } from '../data/workflow';
+import type { Project, StepId, StepRecord, StepStatus } from '../data/types';
+import { STEP_BY_ID, WORKFLOW_STEPS } from '../domain/steps';
 
-/** 完了ステップの割合（0〜100の整数）。進行中は半分の重みで数える。 */
-export function workflowProgress(steps: Record<StepId, StepStatus>): number {
-  const weights: Record<StepStatus, number> = { todo: 0, in_progress: 0.5, done: 1 };
+/** 完了ステップの割合（0〜100の整数）。生成中は半分の重みで数える。 */
+export function workflowProgress(steps: Record<StepId, StepRecord>): number {
+  const weights: Record<StepStatus, number> = { todo: 0, running: 0.5, done: 1 };
   const total = WORKFLOW_STEPS.length;
-  const earned = WORKFLOW_STEPS.reduce((sum, step) => sum + weights[steps[step.id]], 0);
+  const earned = WORKFLOW_STEPS.reduce((sum, step) => sum + weights[steps[step.id].status], 0);
   return Math.round((earned / total) * 100);
 }
 
 /** 復帰先のステップ。未完了の先頭を返し、すべて完了なら最後のステップを返す。 */
-export function currentStep(steps: Record<StepId, StepStatus>): StepId {
-  const next = WORKFLOW_STEPS.find((step) => steps[step.id] !== 'done');
+export function currentStep(steps: Record<StepId, StepRecord>): StepId {
+  const next = WORKFLOW_STEPS.find((step) => steps[step.id].status !== 'done');
   return (next ?? WORKFLOW_STEPS[WORKFLOW_STEPS.length - 1]).id;
 }
 
-/** 前提ステップ（ステッパー上で手前にあるステップ）のうち未完了のもの。 */
+/** 依存関係（第4章 4-2 の dependsOn）のうち未完了のもの。 */
 export function unmetPrerequisites(
-  steps: Record<StepId, StepStatus>,
+  steps: Record<StepId, StepRecord>,
   stepId: StepId,
 ): string[] {
-  const index = WORKFLOW_STEPS.findIndex((step) => step.id === stepId);
-  return WORKFLOW_STEPS.slice(0, Math.max(index, 0))
-    .filter((step) => steps[step.id] !== 'done')
-    .map((step) => step.label);
+  return STEP_BY_ID[stepId].dependsOn
+    .filter((dependency) => steps[dependency].status !== 'done')
+    .map((dependency) => STEP_BY_ID[dependency].label);
+}
+
+/** stale なステップのラベル。提案書プレビューと出力画面の警告に使う（第4章 4-4）。 */
+export function staleStepLabels(steps: Record<StepId, StepRecord>): string[] {
+  return WORKFLOW_STEPS.filter((step) => steps[step.id].stale).map((step) => step.label);
+}
+
+/** stale なステップID。一括再生成の対象。 */
+export function staleStepIds(steps: Record<StepId, StepRecord>): StepId[] {
+  return WORKFLOW_STEPS.filter((step) => steps[step.id].stale).map((step) => step.id);
 }
 
 export interface ProjectFilter {

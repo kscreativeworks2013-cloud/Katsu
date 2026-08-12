@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useMatch } from 'react-router-dom';
-import { WORKFLOW_STEPS } from '../data/workflow';
+import { WORKFLOW_STEPS } from '../domain/steps';
 import { useAppStore } from '../store/context';
 import { Sidebar } from './Sidebar';
 

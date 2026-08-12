@@ -1,10 +1,18 @@
 /*
- * UIフェーズのシードデータ。永続化層が入るまでの表示用サンプルで、
- * 実データはデータモデル設計フェーズで置き換える。
+ * シードデータ。localStorage に保存済みの状態が無いときの初期値として使う。
+ * 生成済みの案件はシードでも provenance を持つ（第4章 4-1）。
  */
 
 import { emptyWorkspace, fullWorkspace } from './generate';
-import type { PortfolioWork, Project, Settings, StepId, StepStatus, Workspace } from './types';
+import type {
+  PortfolioWork,
+  Project,
+  Provenance,
+  Settings,
+  StepId,
+  StepRecord,
+  Workspace,
+} from './types';
 
 /** 納期が常に「近い将来」に見えるよう、起動時の日付からの相対で組み立てる。 */
 function isoInDays(days: number): string {
@@ -13,7 +21,11 @@ function isoInDays(days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function steps(done: StepId[], inProgress: StepId[] = []): Record<StepId, StepStatus> {
+/**
+ * ステップ記録のシード。生成中（running）は実行中の Run とセットでしか成立しないため、
+ * シードでは完了か未着手のみを使う。
+ */
+function steps(done: StepId[]): Record<StepId, StepRecord> {
   const all: StepId[] = [
     'brand',
     'competitors',
@@ -27,9 +39,13 @@ function steps(done: StepId[], inProgress: StepId[] = []): Record<StepId, StepSt
   return Object.fromEntries(
     all.map((id) => [
       id,
-      done.includes(id) ? 'done' : inProgress.includes(id) ? 'in_progress' : 'todo',
+      {
+        status: done.includes(id) ? 'done' : 'todo',
+        lastRunId: done.includes(id) ? 'run-seed' : null,
+        stale: false,
+      } satisfies StepRecord,
     ]),
-  ) as Record<StepId, StepStatus>;
+  ) as Record<StepId, StepRecord>;
 }
 
 const maison: Project = {
@@ -83,7 +99,7 @@ const maison: Project = {
     'PDF',
     'PowerPoint',
   ],
-  steps: steps(['brand', 'competitors', 'concepts', 'moodboard'], ['shots']),
+  steps: steps(['brand', 'competitors', 'concepts', 'moodboard', 'shots']),
   updatedAt: isoInDays(-1),
 };
 
@@ -138,10 +154,16 @@ const aurelia: Project = {
     '英語Proposal',
     'PDF',
   ],
-  steps: steps(
-    ['brand', 'competitors', 'concepts', 'moodboard', 'shots', 'prompts'],
-    ['proposal'],
-  ),
+  // プロンプトは提案書の前提ではないため（proposal の dependsOn に無い）、未着手のままでも整合する。
+  steps: steps([
+    'brand',
+    'competitors',
+    'concepts',
+    'moodboard',
+    'shots',
+    'proposal',
+    'export',
+  ]),
   updatedAt: isoInDays(-3),
 };
 
@@ -192,10 +214,13 @@ const kohaku: Project = {
 
 export const seedProjects: Project[] = [maison, aurelia, kohaku];
 
+const maisonSeed = fullWorkspace(maison, 0, 'run-seed', isoInDays(-1));
+const aureliaSeed = fullWorkspace(aurelia, 1, 'run-seed', isoInDays(-3));
+
 export const seedWorkspaces: Record<string, Workspace> = {
-  [maison.id]: fullWorkspace(maison, 0),
+  [maison.id]: maisonSeed.workspace,
   [aurelia.id]: {
-    ...fullWorkspace(aurelia, 1),
+    ...aureliaSeed.workspace,
     exports: [
       {
         id: 'exp-1',
@@ -214,6 +239,12 @@ export const seedWorkspaces: Record<string, Workspace> = {
     ],
   },
   [kohaku.id]: emptyWorkspace(),
+};
+
+export const seedProvenance: Record<string, Provenance> = {
+  [maison.id]: maisonSeed.provenance,
+  [aurelia.id]: aureliaSeed.provenance,
+  [kohaku.id]: {},
 };
 
 export const seedPortfolio: PortfolioWork[] = [

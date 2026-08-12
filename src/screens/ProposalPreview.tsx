@@ -2,7 +2,9 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { Project, Settings, Workspace } from '../data/types';
 import { PROPOSAL_SECTIONS } from '../data/workflow';
 import { formatDate, formatYen } from '../lib/projects';
-import { useAppStore, useProject } from '../store/context';
+import { adoptedConcept } from '../domain/steps';
+import { staleStepLabels } from '../lib/projects';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import { Card, PageHeader } from '../ui/primitives';
 
 type Lang = 'ja' | 'en';
@@ -26,7 +28,7 @@ function sectionBody(
   workspace: Workspace,
   settings: Settings,
 ): string[] {
-  const concept = workspace.concepts.find((item) => item.adopted);
+  const concept = adoptedConcept(workspace);
   const ja = lang === 'ja';
 
   switch (id) {
@@ -156,12 +158,14 @@ export function ProposalPreviewScreen() {
   const { projectId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const { project, workspace } = useProject(projectId);
-  const { settings, runStep, generating } = useAppStore();
+  const { settings, requestRun, pendingRun } = useAppStore();
+  const busy = useIsRunning(projectId, 'proposal');
 
   if (!project || !workspace) return null;
 
   const lang: Lang = params.get('lang') === 'en' ? 'en' : 'ja';
-  const busy = generating === `${projectId}:proposal`;
+  // stale は出力の直前に必ず見えるようにする（第4章 4-4）。
+  const stale = staleStepLabels(project.steps);
 
   return (
     <>
@@ -193,14 +197,21 @@ export function ProposalPreviewScreen() {
             <button
               className="btn"
               type="button"
-              onClick={() => runStep(projectId, 'proposal')}
-              disabled={busy}
+              onClick={() => requestRun(projectId, 'proposal')}
+              disabled={pendingRun !== null}
             >
               {busy ? '生成中…' : '提案書を生成'}
             </button>
           </>
         }
       />
+
+      {stale.length > 0 && (
+        <p className="form-error" role="status">
+          内容が古い可能性のある章：{stale.join('、')}
+          。出力前に再生成するか、このままでよいか確認してください。
+        </p>
+      )}
 
       <div className="split">
         <nav className="outline card" aria-label="章立て">

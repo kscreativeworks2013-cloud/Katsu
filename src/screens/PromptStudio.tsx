@@ -3,14 +3,15 @@ import { useParams } from 'react-router-dom';
 import { generatePrompt } from '../data/generate';
 import type { PromptTarget } from '../data/types';
 import { PROMPT_TARGETS } from '../data/workflow';
-import { useAppStore, useProject } from '../store/context';
+import { useAppStore, useIsRunning, useProject } from '../store/context';
 import { Card, EmptyState, Field, PageHeader, Skeleton } from '../ui/primitives';
 
 /** 3-9 AIプロンプト生成：AI別に最適化したプロンプトを一括生成する。 */
 export function PromptStudioScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { runStep, updateWorkspace, generating, settings } = useAppStore();
+  const { requestRun, editField, pendingRun, settings } = useAppStore();
+  const busy = useIsRunning(projectId, 'prompts');
   const [target, setTarget] = useState<PromptTarget>('chatgpt');
   const [shotId, setShotId] = useState('all');
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -18,7 +19,6 @@ export function PromptStudioScreen() {
 
   if (!project || !workspace) return null;
 
-  const busy = generating === `${projectId}:prompts`;
   const shot = workspace.shots.find((item) => item.id === shotId);
   const key = `${target}:${shotId}`;
   const generated = generatePrompt(project, workspace, target, shot);
@@ -34,7 +34,7 @@ export function PromptStudioScreen() {
   function change(next: string) {
     setOverrides((current) => ({ ...current, [key]: next }));
     if (shotId === 'all') {
-      updateWorkspace(projectId, { prompts: { ...workspace?.prompts, [target]: next } });
+      editField(projectId, `prompts.${target}`, next);
     }
   }
 
@@ -57,8 +57,8 @@ export function PromptStudioScreen() {
           <button
             className="btn"
             type="button"
-            onClick={() => runStep(projectId, 'prompts')}
-            disabled={busy}
+            onClick={() => requestRun(projectId, 'prompts')}
+            disabled={pendingRun !== null}
           >
             {busy ? '生成中…' : '全AI分を一括生成'}
           </button>

@@ -7,4 +7,6 @@ import { afterEach } from 'vitest';
 // from one test leaking into the next.
 afterEach(() => {
   cleanup();
+  // アプリは localStorage に状態を保存する。テスト間で持ち越さないよう毎回消す。
+  localStorage.clear();
 });

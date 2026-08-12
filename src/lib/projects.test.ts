@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Project, StepId, StepStatus } from '../data/types';
+import type { Project, StepId, StepRecord, StepStatus } from '../data/types';
 import { seedProjects } from '../data/fixtures';
 import {
   currentStep,
@@ -8,6 +8,8 @@ import {
   filterProjects,
   formatDate,
   formatYen,
+  staleStepIds,
+  staleStepLabels,
   unmetPrerequisites,
   workflowProgress,
 } from './projects';
@@ -17,18 +19,27 @@ import {
 
 function steps(
   overrides: Partial<Record<StepId, StepStatus>> = {},
-): Record<StepId, StepStatus> {
-  return {
-    brand: 'todo',
-    competitors: 'todo',
-    concepts: 'todo',
-    moodboard: 'todo',
-    shots: 'todo',
-    prompts: 'todo',
-    proposal: 'todo',
-    export: 'todo',
-    ...overrides,
-  };
+  stale: StepId[] = [],
+): Record<StepId, StepRecord> {
+  const all: StepId[] = [
+    'brand',
+    'competitors',
+    'concepts',
+    'moodboard',
+    'shots',
+    'prompts',
+    'proposal',
+    'export',
+  ];
+  return Object.fromEntries(
+    all.map((id) => {
+      const status = overrides[id] ?? 'todo';
+      return [
+        id,
+        { status, lastRunId: status === 'done' ? 'run-1' : null, stale: stale.includes(id) },
+      ];
+    }),
+  ) as Record<StepId, StepRecord>;
 }
 
 describe('workflowProgress', () => {
@@ -53,10 +64,10 @@ describe('workflowProgress', () => {
     ).toBe(100);
   });
 
-  it('は進行中を半分の重みで数える', () => {
-    // 完了2 + 進行中1 = 2.5 / 8 ステップ
+  it('は生成中を半分の重みで数える', () => {
+    // 完了2 + 生成中1 = 2.5 / 8 ステップ
     expect(
-      workflowProgress(steps({ brand: 'done', competitors: 'done', concepts: 'in_progress' })),
+      workflowProgress(steps({ brand: 'done', competitors: 'done', concepts: 'running' })),
     ).toBe(31);
   });
 });
@@ -68,18 +79,30 @@ describe('currentStep', () => {
 
   it('はすべて完了なら最後のステップを返す', () => {
     const all = steps();
-    for (const key of Object.keys(all) as StepId[]) all[key] = 'done';
+    for (const key of Object.keys(all) as StepId[]) all[key] = { ...all[key], status: 'done' };
     expect(currentStep(all)).toBe('export');
   });
 });
 
 describe('unmetPrerequisites', () => {
-  it('は手前の未完了ステップだけを挙げる', () => {
+  it('は依存先の未完了ステップだけを挙げる', () => {
     expect(unmetPrerequisites(steps({ brand: 'done' }), 'concepts')).toEqual(['競合分析']);
   });
 
-  it('は最初のステップでは空になる', () => {
+  it('は依存の無いステップでは空になる', () => {
     expect(unmetPrerequisites(steps(), 'brand')).toEqual([]);
+  });
+});
+
+describe('staleStepLabels / staleStepIds', () => {
+  it('は stale なステップだけを返す', () => {
+    const record = steps({ brand: 'done', competitors: 'done' }, ['competitors']);
+    expect(staleStepIds(record)).toEqual(['competitors']);
+    expect(staleStepLabels(record)).toEqual(['競合分析']);
+  });
+
+  it('は stale が無ければ空になる', () => {
+    expect(staleStepIds(steps({ brand: 'done' }))).toEqual([]);
   });
 });
 
