@@ -3,15 +3,17 @@ import { useParams } from 'react-router-dom';
 import { generatePrompt } from '../data/generate';
 import type { PromptTarget } from '../data/types';
 import { PROMPT_TARGETS } from '../data/workflow';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Card, EmptyState, Field, PageHeader, Skeleton } from '../ui/primitives';
 
 /** 3-9 AIプロンプト生成：AI別に最適化したプロンプトを一括生成する。 */
 export function PromptStudioScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField, pendingRun, settings } = useAppStore();
-  const busy = useIsRunning(projectId, 'prompts');
+  const { requestRun, editField, settings } = useAppStore();
+  const pending = usePendingRun(projectId, 'prompts');
+  const busy = pending?.status === 'running';
+  const blocked = pending !== undefined;
   const [target, setTarget] = useState<PromptTarget>('chatgpt');
   const [shotId, setShotId] = useState('all');
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -58,7 +60,7 @@ export function PromptStudioScreen() {
             className="btn"
             type="button"
             onClick={() => requestRun(projectId, 'prompts')}
-            disabled={pendingRun !== null}
+            disabled={blocked}
           >
             {busy ? '生成中…' : '全AI分を一括生成'}
           </button>

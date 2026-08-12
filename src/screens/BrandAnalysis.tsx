@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { isProtected } from '../domain/provenance';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import {
   Badge,
   Card,
@@ -25,14 +25,16 @@ function EditedMark({ edited }: { edited: boolean }) {
 export function BrandAnalysisScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace, provenance } = useProject(projectId);
-  const { requestRun, editField, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'brand');
+  const { requestRun, editField } = useAppStore();
+  const pending = usePendingRun(projectId, 'brand');
+  const busy = pending?.status === 'running';
 
   if (!project || !workspace) return null;
 
   const brand = workspace.brand;
   const hasBrand = brand !== undefined;
-  const blocked = pendingRun !== null;
+  // このステップに未解決の Run がある間は再実行できない（第4章 4-3）。
+  const blocked = pending !== undefined;
 
   const sources = [
     { label: 'ブランドURL', value: project.brandUrl },

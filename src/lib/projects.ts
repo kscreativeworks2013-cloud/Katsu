@@ -8,7 +8,7 @@ import { STEP_BY_ID, WORKFLOW_STEPS } from '../domain/steps';
 
 /** 完了ステップの割合（0〜100の整数）。生成中は半分の重みで数える。 */
 export function workflowProgress(steps: Record<StepId, StepRecord>): number {
-  const weights: Record<StepStatus, number> = { todo: 0, running: 0.5, done: 1 };
+  const weights: Record<StepStatus, number> = { todo: 0, running: 0.5, review: 0.75, done: 1 };
   const total = WORKFLOW_STEPS.length;
   const earned = WORKFLOW_STEPS.reduce((sum, step) => sum + weights[steps[step.id].status], 0);
   return Math.round((earned / total) * 100);

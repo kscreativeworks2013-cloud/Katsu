@@ -15,7 +15,11 @@ export type StepId =
   | 'proposal'
   | 'export';
 
-export type StepStatus = 'todo' | 'running' | 'done';
+/**
+ * review（確認待ち）は Run が完了し差分プレビューが未適用の状態。
+ * 「適用するまで書き込まない」（第4章 4-3）を語彙として持つ。
+ */
+export type StepStatus = 'todo' | 'running' | 'review' | 'done';
 
 /** フィールドの出自。第4章 4-1。 */
 export type FieldOrigin = 'generated' | 'edited' | 'empty';
@@ -54,6 +58,29 @@ export interface StepRecord {
   stale: boolean;
   staleSince?: string;
   staleCause?: StepId;
+  /** 「確認したが再生成不要」の記録。次に上流が変化したら破棄され、再び stale に戻る。 */
+  staleAcknowledgedAt?: string;
+  staleAcknowledgedCause?: StepId;
+}
+
+/** 画像アセットの出自（第5章 5-1）。AI生成か持ち込みかはアセット自身が持つ。 */
+export type AssetOrigin = 'upload' | 'external' | 'ai';
+
+export interface Asset {
+  id: string;
+  origin: AssetOrigin;
+  label: string;
+  /** upload はファイル名、external は URL、ai は生成条件の要約。 */
+  source: string;
+  /** ai 生成のとき、そのアセットを作った生成ライン。 */
+  runId: string | null;
+  mimeType: string;
+  createdAt: string;
+  /**
+   * プレビュー用サムネイル（data URI）。容量退避で失われることがあるが、
+   * メタデータと参照（assetId）は失わない（第5章 5-1）。
+   */
+  thumbnail?: string;
 }
 
 export type ProjectStatus = 'draft' | 'in_progress' | 'review' | 'delivered';
@@ -162,6 +189,8 @@ export interface MoodTile {
   source: string;
   from: string;
   to: string;
+  /** 参照するアセット。未設定・解決不能時はグラデーションで代替する。 */
+  assetId?: string | null;
 }
 
 export interface Shot {
@@ -175,6 +204,8 @@ export interface Shot {
   volume: string;
   priority: 'must' | 'want' | 'option';
   note: string;
+  /** 絵コンテのフレーム画像。未設定時はフレーム図で代替する。 */
+  assetId?: string | null;
 }
 
 export interface ExportRecord {
@@ -210,6 +241,8 @@ export interface PortfolioWork {
   tags: string[];
   from: string;
   to: string;
+  /** 作品画像のアセット。未設定時はグラデーションで代替する。 */
+  assetId?: string | null;
 }
 
 /** モデル名を固定しないための用途別の割り当て（第3章 3-13）。 */

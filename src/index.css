@@ -18,10 +18,15 @@
   --champagne: #b3936a;
   --champagne-soft: #e7d9c4;
 
-  /* State */
+  /* State
+   * 警告（要確認）と保護（手動編集済み）は意味が逆のため、同系色にしない。
+   * 警告は赤系、保護は青灰系（第3章 デザイントークン）。 */
   --state-progress: #b08a3e;
   --state-done: #5c7a5c;
   --state-alert: #a24f47;
+  --state-protected: #5b6b83;
+  /* インク地のサイドバー用の明るい警告色。 */
+  --state-alert-on-dark: #e2a49b;
 
   --radius: 2px;
   --space: 8px;
@@ -168,6 +173,10 @@ a {
 .nav-step-mark {
   font-size: 11px;
   color: var(--champagne);
+}
+
+.nav-step-mark--warn {
+  color: var(--state-alert-on-dark);
 }
 
 .main {
@@ -495,6 +504,11 @@ legend {
   color: var(--state-alert);
 }
 
+.badge--protected {
+  border-color: var(--state-protected);
+  color: var(--state-protected);
+}
+
 .meter {
   display: block;
   width: 92px;
@@ -662,6 +676,10 @@ legend {
   color: var(--state-alert);
 }
 
+.step-state--review {
+  color: var(--state-progress);
+}
+
 .step-state--todo {
   color: var(--muted);
 }
@@ -774,6 +792,15 @@ legend {
   border: 1px solid var(--line);
   padding: 40px 44px;
   min-height: 220px;
+}
+
+.slot-placeholder {
+  border: 1px dashed var(--line-strong);
+  padding: 22px 16px;
+  margin-top: 6px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
 }
 
 .proposal-page h3 {

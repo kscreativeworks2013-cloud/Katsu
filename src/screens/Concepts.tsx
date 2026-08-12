@@ -1,14 +1,16 @@
 import { useParams } from 'react-router-dom';
 import { isProtected } from '../domain/provenance';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Badge, Card, Chips, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
 /** 3-6 撮影コンセプト生成：2〜3案を生成し、1案を採用する。 */
 export function ConceptsScreen() {
   const { projectId = '' } = useParams();
   const { workspace, provenance } = useProject(projectId);
-  const { requestRun, setAdoptedConcept, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'concepts');
+  const { requestRun, setAdoptedConcept } = useAppStore();
+  const pending = usePendingRun(projectId, 'concepts');
+  const busy = pending?.status === 'running';
+  const blocked = pending !== undefined;
 
   if (!workspace) return null;
 
@@ -26,7 +28,7 @@ export function ConceptsScreen() {
             className="btn"
             type="button"
             onClick={() => requestRun(projectId, 'concepts')}
-            disabled={pendingRun !== null}
+            disabled={blocked}
           >
             {busy ? '生成中…' : concepts.length > 0 ? 'コンセプトを再生成' : 'AIで生成'}
           </button>
@@ -53,7 +55,7 @@ export function ConceptsScreen() {
                 className="btn"
                 type="button"
                 onClick={() => requestRun(projectId, 'concepts')}
-                disabled={pendingRun !== null}
+                disabled={blocked}
               >
                 AIで生成する
               </button>

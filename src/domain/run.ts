@@ -42,9 +42,12 @@ export function buildDiff(
   });
 }
 
-/** 既定の選択。保護されたフィールドは利用者が明示的に選ばない限り適用しない。 */
+/**
+ * 既定の選択は「上書き」のみ。保護は明示的に選んだ場合だけ、
+ * 変更なしは適用しても意味を持たないため選択対象にしない（第4章 4-3）。
+ */
 export function defaultSelection(diffs: FieldDiff[]): string[] {
-  return diffs.filter((diff) => diff.kind !== 'protected').map((diff) => diff.path);
+  return diffs.filter((diff) => diff.kind === 'overwrite').map((diff) => diff.path);
 }
 
 /** 選択されたフィールドだけを書き込み、provenance を生成済みに更新する。 */

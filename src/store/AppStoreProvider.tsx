@@ -8,6 +8,7 @@ import {
 } from '../data/fixtures';
 import { emptyWorkspace } from '../data/generate';
 import type {
+  Asset,
   ExportRecord,
   PortfolioWork,
   Project,
@@ -18,6 +19,7 @@ import type {
   StepRecord,
   Workspace,
 } from '../data/types';
+import { fitThumbnail } from '../domain/assets';
 import { readField, sameValue, writeField } from '../domain/fields';
 import { markEdited } from '../domain/provenance';
 import { applyValues, buildDiff, defaultSelection } from '../domain/run';
@@ -27,6 +29,7 @@ import { mockEngine } from '../engine/mockEngine';
 import { createId } from '../lib/projects';
 import {
   AppStoreContext,
+  runKey,
   type AppStore,
   type NewProjectInput,
   type PendingRun,
@@ -93,21 +96,22 @@ export function AppStoreProvider({
     persisted?.provenance ?? seedProvenance,
   );
   const [runs, setRuns] = useState<Run[]>(persisted?.runs ?? []);
+  const [assets, setAssets] = useState<Record<string, Asset>>(persisted?.assets ?? {});
   const [portfolio, setPortfolio] = useState<PortfolioWork[]>(
     persisted?.portfolio ?? seedPortfolio,
   );
   const [settings, setSettings] = useState<Settings>(persisted?.settings ?? defaultSettings);
-  const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
+  const [pendingRuns, setPendingRuns] = useState<Record<string, PendingRun>>({});
 
   // 生成完了時に最新の状態で差分を取るための参照。レンダー中には触らない。
-  const latest = useRef({ projects, workspaces, provenance });
+  const latest = useRef({ projects, workspaces, provenance, pendingRuns });
   useEffect(() => {
-    latest.current = { projects, workspaces, provenance };
+    latest.current = { projects, workspaces, provenance, pendingRuns };
   });
 
   useEffect(() => {
-    saveState({ projects, workspaces, provenance, runs, portfolio, settings });
-  }, [projects, workspaces, provenance, runs, portfolio, settings]);
+    saveState({ projects, workspaces, provenance, runs, assets, portfolio, settings });
+  }, [projects, workspaces, provenance, runs, assets, portfolio, settings]);
 
   const patchSteps = useCallback(
     (
@@ -127,7 +131,8 @@ export function AppStoreProvider({
 
   /**
    * 上流が変わったときに下流を stale にする（第4章 4-4 選択肢B）。
-   * データは消さず、古い可能性があることだけを示す。
+   * データは消さず、古い可能性があることだけを示す。確認済みの記録は
+   * 新しい変更で前提が変わったため破棄する。
    */
   const cascadeStale = useCallback(
     (projectId: string, stepId: StepId) => {
@@ -138,7 +143,13 @@ export function AppStoreProvider({
         const next = { ...steps };
         for (const id of affected) {
           if (next[id].status === 'done' && !next[id].stale) {
-            next[id] = { ...next[id], stale: true, staleSince: at, staleCause: stepId };
+            next[id] = {
+              status: 'done',
+              lastRunId: next[id].lastRunId,
+              stale: true,
+              staleSince: at,
+              staleCause: stepId,
+            };
           }
         }
         return next;
@@ -206,9 +217,24 @@ export function AppStoreProvider({
     );
   }, []);
 
+  /** Run の解決（適用・破棄・失敗の後始末）でステップを実行前の状態へ戻す。 */
+  const revertStep = useCallback(
+    (projectId: string, stepId: StepId) => {
+      patchSteps(projectId, (steps) => ({
+        ...steps,
+        [stepId]: {
+          ...steps[stepId],
+          status: steps[stepId].lastRunId ? 'done' : 'todo',
+        },
+      }));
+    },
+    [patchSteps],
+  );
+
   const finishRun = useCallback(
     (runId: string, projectId: string, stepId: StepId, values: Record<string, unknown>) => {
       const at = nowIso();
+      const key = runKey(projectId, stepId);
 
       // 出力フィールドを持たないステップ（提案書・出力）は差分が生じないので、
       // プレビューを挟まずそのまま完了にする。
@@ -221,7 +247,11 @@ export function AppStoreProvider({
           ),
         );
         completeStep(projectId, stepId, runId);
-        setPendingRun(null);
+        setPendingRuns((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
         return;
       }
 
@@ -232,17 +262,25 @@ export function AppStoreProvider({
       setRuns((current) =>
         current.map((run) => (run.id === runId ? { ...run, finishedAt: at } : run)),
       );
-      setPendingRun({
-        runId,
-        projectId,
-        stepId,
-        status: 'ready',
-        values,
-        diffs,
-        selected: defaultSelection(diffs),
-      });
+      // Run 完了・未適用は独立した状態「確認待ち（review）」（第4章 4-1）。
+      patchSteps(projectId, (steps) => ({
+        ...steps,
+        [stepId]: { ...steps[stepId], status: 'review' },
+      }));
+      setPendingRuns((current) => ({
+        ...current,
+        [key]: {
+          runId,
+          projectId,
+          stepId,
+          status: 'ready',
+          values,
+          diffs,
+          selected: defaultSelection(diffs),
+        },
+      }));
     },
-    [completeStep],
+    [completeStep, patchSteps],
   );
 
   const failRun = useCallback(
@@ -253,30 +291,28 @@ export function AppStoreProvider({
         ),
       );
       // 失敗時は既存データを一切変更せず、ステップの状態を実行前に戻す（第4章 4-3）。
-      patchSteps(projectId, (steps) => ({
-        ...steps,
-        [stepId]: {
-          ...steps[stepId],
-          status: steps[stepId].lastRunId ? 'done' : 'todo',
+      revertStep(projectId, stepId);
+      setPendingRuns((current) => ({
+        ...current,
+        [runKey(projectId, stepId)]: {
+          runId,
+          projectId,
+          stepId,
+          status: 'failed',
+          values: {},
+          diffs: [],
+          selected: [],
+          error: message,
         },
       }));
-      setPendingRun({
-        runId,
-        projectId,
-        stepId,
-        status: 'failed',
-        values: {},
-        diffs: [],
-        selected: [],
-        error: message,
-      });
     },
-    [patchSteps],
+    [revertStep],
   );
 
   const requestRun = useCallback(
     (projectId: string, stepId: StepId) => {
-      if (pendingRun?.status === 'running') return;
+      // 同一ステップの Run は同時に1本まで。解決（適用・破棄・閉じる）まで再実行不可（第4章 4-3）。
+      if (latest.current.pendingRuns[runKey(projectId, stepId)]) return;
 
       const project = latest.current.projects.find((item) => item.id === projectId);
       if (!project) return;
@@ -299,15 +335,18 @@ export function AppStoreProvider({
         ...steps,
         [stepId]: { ...steps[stepId], status: 'running' },
       }));
-      setPendingRun({
-        runId,
-        projectId,
-        stepId,
-        status: 'running',
-        values: {},
-        diffs: [],
-        selected: [],
-      });
+      setPendingRuns((current) => ({
+        ...current,
+        [runKey(projectId, stepId)]: {
+          runId,
+          projectId,
+          stepId,
+          status: 'running',
+          values: {},
+          diffs: [],
+          selected: [],
+        },
+      }));
 
       engine
         .run({ runId, stepId, project, workspace })
@@ -321,71 +360,111 @@ export function AppStoreProvider({
           ),
         );
     },
-    [engine, failRun, finishRun, patchSteps, pendingRun],
+    [engine, failRun, finishRun, patchSteps],
   );
 
-  const toggleRunField = useCallback((path: string) => {
-    setPendingRun((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            selected: current.selected.includes(path)
-              ? current.selected.filter((item) => item !== path)
-              : [...current.selected, path],
-          },
-    );
+  const toggleRunField = useCallback((projectId: string, stepId: StepId, path: string) => {
+    const key = runKey(projectId, stepId);
+    setPendingRuns((current) => {
+      const run = current[key];
+      if (!run) return current;
+      return {
+        ...current,
+        [key]: {
+          ...run,
+          selected: run.selected.includes(path)
+            ? run.selected.filter((item) => item !== path)
+            : [...run.selected, path],
+        },
+      };
+    });
   }, []);
 
-  const applyRun = useCallback(() => {
-    const run = pendingRun;
-    if (!run || run.status !== 'ready') return;
+  const applyRun = useCallback(
+    (projectId: string, stepId: StepId) => {
+      const key = runKey(projectId, stepId);
+      const run = latest.current.pendingRuns[key];
+      if (!run || run.status !== 'ready') return;
 
-    const at = nowIso();
-    const before = latest.current.workspaces[run.projectId] ?? emptyWorkspace();
-    const prov = latest.current.provenance[run.projectId] ?? {};
-    const result = applyValues(before, prov, run.values, run.selected, run.runId, at);
+      const at = nowIso();
+      const before = latest.current.workspaces[projectId] ?? emptyWorkspace();
+      const prov = latest.current.provenance[projectId] ?? {};
+      const result = applyValues(before, prov, run.values, run.selected, run.runId, at);
 
-    // 値が実際に変わったかどうかで、下流を stale にするかを決める。
-    const changed = result.appliedFields.some(
-      (path) => !sameValue(readField(before, path), readField(result.workspace, path)),
-    );
+      // 値が実際に変わったかどうかで、下流を stale にするかを決める。
+      const changed = result.appliedFields.some(
+        (path) => !sameValue(readField(before, path), readField(result.workspace, path)),
+      );
 
-    setWorkspaces((current) => ({ ...current, [run.projectId]: result.workspace }));
-    setProvenance((current) => ({ ...current, [run.projectId]: result.provenance }));
-    setRuns((current) =>
-      current.map((item) =>
-        item.id === run.runId
-          ? { ...item, status: 'applied', finishedAt: at, appliedFields: result.appliedFields }
-          : item,
-      ),
-    );
+      setWorkspaces((current) => ({ ...current, [projectId]: result.workspace }));
+      setProvenance((current) => ({ ...current, [projectId]: result.provenance }));
+      setRuns((current) =>
+        current.map((item) =>
+          item.id === run.runId
+            ? {
+                ...item,
+                status: 'applied',
+                finishedAt: at,
+                appliedFields: result.appliedFields,
+              }
+            : item,
+        ),
+      );
+      completeStep(projectId, stepId, run.runId);
+      if (changed) cascadeStale(projectId, stepId);
+      setPendingRuns((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    },
+    [cascadeStale, completeStep],
+  );
 
-    completeStep(run.projectId, run.stepId, run.runId);
-    if (changed) cascadeStale(run.projectId, run.stepId);
-    setPendingRun(null);
-  }, [cascadeStale, completeStep, pendingRun]);
+  const discardRun = useCallback(
+    (projectId: string, stepId: StepId) => {
+      const key = runKey(projectId, stepId);
+      const run = latest.current.pendingRuns[key];
+      if (!run) return;
 
-  const discardRun = useCallback(() => {
-    const run = pendingRun;
-    if (!run) return;
+      setRuns((current) =>
+        current.map((item) =>
+          item.id === run.runId && item.status === 'running'
+            ? { ...item, status: 'discarded', finishedAt: nowIso() }
+            : item,
+        ),
+      );
+      revertStep(projectId, stepId);
+      setPendingRuns((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    },
+    [revertStep],
+  );
 
-    setRuns((current) =>
-      current.map((item) =>
-        item.id === run.runId && item.status === 'running'
-          ? { ...item, status: 'discarded', finishedAt: nowIso() }
-          : item,
-      ),
-    );
-    patchSteps(run.projectId, (steps) => ({
-      ...steps,
-      [run.stepId]: {
-        ...steps[run.stepId],
-        status: steps[run.stepId].lastRunId ? 'done' : 'todo',
-      },
-    }));
-    setPendingRun(null);
-  }, [patchSteps, pendingRun]);
+  const acknowledgeStale = useCallback(
+    (projectId: string, stepId: StepId) => {
+      const at = nowIso();
+      patchSteps(projectId, (steps) => {
+        const record = steps[stepId];
+        if (!record.stale) return steps;
+        return {
+          ...steps,
+          [stepId]: {
+            status: record.status,
+            lastRunId: record.lastRunId,
+            stale: false,
+            // 判断の記録。次の上流変化で cascadeStale がこの記録ごと上書きする。
+            staleAcknowledgedAt: at,
+            staleAcknowledgedCause: record.staleCause,
+          },
+        };
+      });
+    },
+    [patchSteps],
+  );
 
   const editField = useCallback(
     (projectId: string, path: string, value: unknown) => {
@@ -440,6 +519,21 @@ export function AppStoreProvider({
     [patchSteps],
   );
 
+  const registerAsset = useCallback(
+    (input: Omit<Asset, 'id' | 'createdAt'>) => {
+      const asset: Asset = {
+        ...input,
+        // サムネイルは容量方針（第5章 5-1）に収まるものだけ保持する。
+        thumbnail: fitThumbnail(assets, input.thumbnail),
+        id: createId('ast'),
+        createdAt: nowIso(),
+      };
+      setAssets((current) => ({ ...current, [asset.id]: asset }));
+      return asset;
+    },
+    [assets],
+  );
+
   const addPortfolioWork = useCallback((work: Omit<PortfolioWork, 'id'>) => {
     setPortfolio((current) => [{ ...work, id: createId('wrk') }, ...current]);
   }, []);
@@ -458,18 +552,21 @@ export function AppStoreProvider({
       workspaces,
       provenance,
       runs,
+      assets,
       portfolio,
       settings,
-      pendingRun,
+      pendingRuns,
       createProject,
       updateProject,
       requestRun,
       toggleRunField,
       applyRun,
       discardRun,
+      acknowledgeStale,
       editField,
       setAdoptedConcept,
       recordExports,
+      registerAsset,
       addPortfolioWork,
       removePortfolioWork,
       updateSettings,
@@ -479,18 +576,21 @@ export function AppStoreProvider({
       workspaces,
       provenance,
       runs,
+      assets,
       portfolio,
       settings,
-      pendingRun,
+      pendingRuns,
       createProject,
       updateProject,
       requestRun,
       toggleRunField,
       applyRun,
       discardRun,
+      acknowledgeStale,
       editField,
       setAdoptedConcept,
       recordExports,
+      registerAsset,
       addPortfolioWork,
       removePortfolioWork,
       updateSettings,

@@ -50,7 +50,7 @@ export function Sidebar() {
             >
               {step.label}
               {activeProject.steps[step.id].stale ? (
-                <span className="nav-step-mark" aria-label="要確認">
+                <span className="nav-step-mark nav-step-mark--warn" aria-label="要確認">
                   !
                 </span>
               ) : (

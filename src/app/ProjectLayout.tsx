@@ -1,8 +1,8 @@
-import { Link, NavLink, Outlet, useParams } from 'react-router-dom';
+import { Link, NavLink, Outlet, useMatch, useParams } from 'react-router-dom';
 import { STEP_STATUS_LABEL } from '../data/workflow';
 import { STEP_BY_ID, WORKFLOW_STEPS } from '../domain/steps';
 import { staleStepIds, unmetPrerequisites } from '../lib/projects';
-import { useAppStore, useProject } from '../store/context';
+import { runKey, useAppStore, useProject } from '../store/context';
 import { EmptyState } from '../ui/primitives';
 import { RunPreview } from '../ui/RunPreview';
 
@@ -10,11 +10,15 @@ import { RunPreview } from '../ui/RunPreview';
  * 案件内の共通枠。ステッパー、前提未完了の注意、stale の通知、
  * 生成結果の差分プレビューをここでまとめて出す。
  * ステッパーはステップ定義から生成しているので、ステップの増減にそのまま追従する（第4章 4-8）。
+ * 差分プレビューは開いているステップのものだけを表示し、他ステップの確認待ちは
+ * ステッパーの「確認待ち」表示から辿る（第4章 4-3 Run の並走）。
  */
 export function ProjectLayout() {
-  const { projectId, '*': rest } = useParams();
+  const { projectId } = useParams();
+  // 子ルート構成では useParams にスプラットが乗らないため、現在のステップは useMatch で取る。
+  const match = useMatch('/projects/:projectId/:segment');
   const { project } = useProject(projectId);
-  const { requestRun, pendingRun } = useAppStore();
+  const { requestRun, acknowledgeStale, pendingRuns } = useAppStore();
 
   if (!project || !projectId) {
     return (
@@ -30,24 +34,16 @@ export function ProjectLayout() {
     );
   }
 
-  const segment = rest?.split('/')[0] ?? '';
-  const current = WORKFLOW_STEPS.find((step) => step.segment === segment);
+  const current = WORKFLOW_STEPS.find((step) => step.segment === match?.params.segment);
   const pending = current ? unmetPrerequisites(project.steps, current.id) : [];
   const stale = staleStepIds(project.steps);
-  const busy = pendingRun?.status === 'running';
 
   return (
     <>
       <nav className="stepper" aria-label="制作ステップ">
         {WORKFLOW_STEPS.map((step, index) => {
           const record = project.steps[step.id];
-          // 適用待ちの間は「生成中」ではなく、利用者の判断待ちであることを示す。
-          const awaiting = pendingRun?.stepId === step.id && pendingRun.status === 'ready';
-          const state = awaiting
-            ? '確認待ち'
-            : record.stale
-              ? '要確認'
-              : STEP_STATUS_LABEL[record.status];
+          const state = record.stale ? '要確認' : STEP_STATUS_LABEL[record.status];
           return (
             <NavLink
               key={step.id}
@@ -60,9 +56,7 @@ export function ProjectLayout() {
               <span className="step-index">STEP {index + 1}</span>
               {step.label}
               <span
-                className={`step-state step-state--${
-                  record.stale || awaiting ? 'stale' : record.status
-                }`}
+                className={`step-state step-state--${record.stale ? 'stale' : record.status}`}
               >
                 {' '}
                 — {state}
@@ -85,13 +79,16 @@ export function ProjectLayout() {
           <div className="card-head">
             <div>
               <h2>上流の変更により、内容が古い可能性があります</h2>
-              <p>データはそのまま使えます。再生成する場合も、適用前に差分を確認できます。</p>
+              <p>
+                データはそのまま使えます。再生成するか、確認のうえ据え置くかを選んでください。
+              </p>
             </div>
           </div>
           <ul className="stack" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {stale.map((stepId) => {
               const record = project.steps[stepId];
               const cause = record.staleCause ? STEP_BY_ID[record.staleCause].label : '上流';
+              const busy = pendingRuns[runKey(projectId, stepId)] !== undefined;
               return (
                 <li className="row" key={stepId} style={{ justifyContent: 'space-between' }}>
                   <span>
@@ -105,6 +102,13 @@ export function ProjectLayout() {
                     >
                       開く
                     </Link>
+                    <button
+                      className="btn btn--ghost btn--small"
+                      type="button"
+                      onClick={() => acknowledgeStale(projectId, stepId)}
+                    >
+                      確認済みにする（再生成不要）
+                    </button>
                     <button
                       className="btn btn--small"
                       type="button"
@@ -121,7 +125,7 @@ export function ProjectLayout() {
         </section>
       )}
 
-      <RunPreview />
+      {current && <RunPreview projectId={projectId} stepId={current.id} />}
 
       <Outlet />
     </>

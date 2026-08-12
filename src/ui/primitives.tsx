@@ -55,7 +55,7 @@ export function Badge({
   tone = 'neutral',
   children,
 }: {
-  tone?: 'neutral' | 'progress' | 'done' | 'alert';
+  tone?: 'neutral' | 'progress' | 'done' | 'alert' | 'protected';
   children: ReactNode;
 }) {
   const suffix = tone === 'neutral' ? '' : ` badge--${tone}`;

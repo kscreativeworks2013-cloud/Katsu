@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { MoodCategory, MoodTile } from '../data/types';
 import { MOOD_CATEGORY_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Card, EmptyState, PageHeader, Skeleton, Swatches } from '../ui/primitives';
 
 const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
@@ -12,8 +12,10 @@ const CATEGORIES = Object.keys(MOOD_CATEGORY_LABEL) as MoodCategory[];
 export function MoodboardScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'moodboard');
+  const { requestRun, editField } = useAppStore();
+  const pending = usePendingRun(projectId, 'moodboard');
+  const busy = pending?.status === 'running';
+  const blocked = pending !== undefined;
 
   if (!project || !workspace) return null;
 
@@ -62,7 +64,7 @@ export function MoodboardScreen() {
             className="btn"
             type="button"
             onClick={() => requestRun(projectId, 'moodboard')}
-            disabled={pendingRun !== null}
+            disabled={blocked}
           >
             {busy ? '生成中…' : tiles.length > 0 ? '構成案を追加生成' : 'AIで生成'}
           </button>
@@ -85,7 +87,7 @@ export function MoodboardScreen() {
                 className="btn"
                 type="button"
                 onClick={() => requestRun(projectId, 'moodboard')}
-                disabled={pendingRun !== null}
+                disabled={blocked}
               >
                 AIで生成する
               </button>

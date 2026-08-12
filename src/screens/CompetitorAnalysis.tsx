@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Card, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
 const MAP_SIZE = { width: 520, height: 360, pad: 44 };
@@ -8,8 +8,10 @@ const MAP_SIZE = { width: 520, height: 360, pad: 44 };
 export function CompetitorAnalysisScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'competitors');
+  const { requestRun, editField } = useAppStore();
+  const pending = usePendingRun(projectId, 'competitors');
+  const busy = pending?.status === 'running';
+  const blocked = pending !== undefined;
 
   if (!project || !workspace) return null;
 
@@ -29,7 +31,7 @@ export function CompetitorAnalysisScreen() {
             className="btn"
             type="button"
             onClick={() => requestRun(projectId, 'competitors')}
-            disabled={pendingRun !== null}
+            disabled={blocked}
           >
             {busy ? '分析中…' : competitors.length > 0 ? '再分析' : 'AIで分析'}
           </button>
@@ -52,7 +54,7 @@ export function CompetitorAnalysisScreen() {
                 className="btn"
                 type="button"
                 onClick={() => requestRun(projectId, 'competitors')}
-                disabled={pendingRun !== null}
+                disabled={blocked}
               >
                 AIで分析する
               </button>

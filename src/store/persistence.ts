@@ -1,10 +1,12 @@
 /*
- * localStorage への永続化（第4章 4-7）。
- * 保存に失敗してもアプリは止めない。メモリ上の状態だけで動作を継続する。
+ * localStorage への永続化（第4章 4-7、第5章 5-1）。
+ * 保存に失敗してもアプリは止めない。容量超過時はまずアセットのサムネイルを退避し、
+ * それでも失敗すればメモリ上の状態だけで動作を継続する。
  * サーバー側の永続化とマルチユーザーの同時編集はスコープ外。
  */
 
 import type {
+  Asset,
   PortfolioWork,
   Project,
   Provenance,
@@ -12,9 +14,11 @@ import type {
   Settings,
   Workspace,
 } from '../data/types';
+import { stripThumbnails } from '../domain/assets';
 
 const STORAGE_KEY = 'lbvpos.state';
-const SCHEMA_VERSION = 1;
+// v2: StepStatus に review、StepRecord に確認済み、assets を追加。
+const SCHEMA_VERSION = 2;
 
 export interface PersistedState {
   version: number;
@@ -22,6 +26,7 @@ export interface PersistedState {
   workspaces: Record<string, Workspace>;
   provenance: Record<string, Provenance>;
   runs: Run[];
+  assets: Record<string, Asset>;
   portfolio: PortfolioWork[];
   settings: Settings;
 }
@@ -59,10 +64,18 @@ export function saveState(state: Omit<PersistedState, 'version'>): void {
   const store = storage();
   if (!store) return;
 
+  const write = (payload: Omit<PersistedState, 'version'>) =>
+    store.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...payload }));
+
   try {
-    store.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...state }));
+    write(state);
   } catch {
-    // 容量超過など。保存できなくても操作は続行させる。
+    // 容量超過。サムネイルを退避して再試行する（メタデータと参照は保持）。
+    try {
+      write({ ...state, assets: stripThumbnails(state.assets) });
+    } catch {
+      // それでも失敗した場合は保存を諦め、操作は続行させる。
+    }
   }
 }
 

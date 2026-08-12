@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { Shot } from '../data/types';
 import { createId } from '../lib/projects';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Badge, Card, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
 const PRIORITY_LABEL: Record<Shot['priority'], string> = {
@@ -15,8 +15,10 @@ const PRIORITY_LABEL: Record<Shot['priority'], string> = {
 export function ShotListScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'shots');
+  const { requestRun, editField } = useAppStore();
+  const pending = usePendingRun(projectId, 'shots');
+  const busy = pending?.status === 'running';
+  const blocked = pending !== undefined;
   const [view, setView] = useState<'list' | 'board'>('list');
 
   if (!project || !workspace) return null;
@@ -63,7 +65,7 @@ export function ShotListScreen() {
             className="btn"
             type="button"
             onClick={() => requestRun(projectId, 'shots')}
-            disabled={pendingRun !== null}
+            disabled={blocked}
           >
             {busy ? '生成中…' : shots.length > 0 ? 'カットを追加生成' : 'AIで生成'}
           </button>
@@ -86,7 +88,7 @@ export function ShotListScreen() {
                 className="btn"
                 type="button"
                 onClick={() => requestRun(projectId, 'shots')}
-                disabled={pendingRun !== null}
+                disabled={blocked}
               >
                 AIで生成する
               </button>

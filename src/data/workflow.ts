@@ -6,6 +6,7 @@ import type { ExportFormat, Language, ProjectStatus, PromptTarget, StepStatus } 
 export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
   todo: '未着手',
   running: '生成中',
+  review: '確認待ち',
   done: '完了',
 };
 
@@ -79,21 +80,6 @@ export const DEFAULT_OUTPUTS: string[] = [
   '英語Proposal',
   'PDF',
   'PowerPoint',
-];
-
-/** 提案書の章立て（第3章 3-10）。 */
-export const PROPOSAL_SECTIONS: { id: string; ja: string; en: string }[] = [
-  { id: 'cover', ja: '表紙', en: 'Cover' },
-  { id: 'brand', ja: 'ブランド分析', en: 'Brand Analysis' },
-  { id: 'competitors', ja: '競合分析', en: 'Competitive Landscape' },
-  { id: 'concept', ja: '撮影コンセプト', en: 'Creative Concept' },
-  { id: 'moodboard', ja: 'ムードボード', en: 'Mood Board' },
-  { id: 'shots', ja: 'ショットリスト', en: 'Shot List' },
-  { id: 'lighting', ja: 'ライティングプラン', en: 'Lighting Plan' },
-  { id: 'staff', ja: 'スタッフ構成', en: 'Crew' },
-  { id: 'schedule', ja: 'スケジュール', en: 'Schedule' },
-  { id: 'budget', ja: '見積もり', en: 'Budget' },
-  { id: 'risk', ja: 'リスク管理', en: 'Risk Management' },
 ];
 
 export const MOOD_CATEGORY_LABEL = {

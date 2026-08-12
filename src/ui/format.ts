@@ -18,3 +18,18 @@ export function summarizeValue(value: unknown): string {
   }
   return JSON.stringify(value).slice(0, 60);
 }
+
+/** コレクションの中身確認用：各アイテムを1行の見出しに落とす。 */
+export function itemLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object') {
+      const record = item as Record<string, unknown>;
+      for (const key of ['title', 'name', 'subject', 'caption', 'text', 'label']) {
+        if (typeof record[key] === 'string' && record[key] !== '') return record[key] as string;
+      }
+    }
+    return JSON.stringify(item).slice(0, 60);
+  });
+}

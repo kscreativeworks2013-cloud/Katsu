@@ -42,7 +42,7 @@ describe('永続化', () => {
     await user.type(screen.getByLabelText('トーン＆マナー'), '追記');
 
     const saved = loadState();
-    expect(saved?.version).toBe(1);
+    expect(saved?.version).toBe(2);
     expect(saved?.provenance['prj-maison']['brand.tone'].origin).toBe('edited');
   });
 });

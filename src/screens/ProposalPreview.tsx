@@ -1,10 +1,12 @@
+import type { CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { Project, Settings, Workspace } from '../data/types';
-import { PROPOSAL_SECTIONS } from '../data/workflow';
+import { ASSET_ORIGIN_LABEL } from '../domain/assets';
+import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/proposal';
 import { formatDate, formatYen } from '../lib/projects';
 import { adoptedConcept } from '../domain/steps';
 import { staleStepLabels } from '../lib/projects';
-import { useAppStore, useIsRunning, useProject } from '../store/context';
+import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Card, PageHeader } from '../ui/primitives';
 
 type Lang = 'ja' | 'en';
@@ -153,13 +155,77 @@ const SECTION_STEP: Record<string, string> = {
   shots: 'shots',
 };
 
+/**
+ * 章の画像スロット（第5章 5-2）。アセット未登録・サムネイル退避時は
+ * グラデーションやプレースホルダにフォールバックし、参照切れで壊れない。
+ */
+function SectionSlots({
+  section,
+  slots,
+}: {
+  section: ProposalSection;
+  slots: {
+    slot: ProposalSection['imageSlots'][number];
+    images: ReturnType<typeof resolveSlot>;
+  }[];
+}) {
+  if (section.imageSlots.length === 0) return null;
+  return (
+    <div className="stack" style={{ marginTop: 16 }}>
+      {slots.map(({ slot, images }) => (
+        <div key={slot.id}>
+          <p className="muted">{slot.label}</p>
+          {images.length === 0 ? (
+            <div className="slot-placeholder">{slot.label}は未登録です</div>
+          ) : (
+            <div className="grid grid--4" style={{ marginTop: 6 }}>
+              {images.map((image) => (
+                <figure className="tile" key={image.key} style={{ margin: 0 }}>
+                  {image.asset?.thumbnail ? (
+                    <img
+                      className="tile-art"
+                      src={image.asset.thumbnail}
+                      alt={image.caption}
+                      style={{ objectFit: 'cover', width: '100%' }}
+                    />
+                  ) : (
+                    <div
+                      className="tile-art"
+                      style={
+                        image.fallback
+                          ? ({
+                              '--from': image.fallback.from,
+                              '--to': image.fallback.to,
+                            } as CSSProperties)
+                          : undefined
+                      }
+                      aria-hidden="true"
+                    />
+                  )}
+                  <figcaption className="tile-body">
+                    <p>{image.caption}</p>
+                    {image.asset && (
+                      <p className="muted">{ASSET_ORIGIN_LABEL[image.asset.origin]}</p>
+                    )}
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** 3-10 提案書プレビュー：出力前に全体を確認し、章単位で修正する。 */
 export function ProposalPreviewScreen() {
   const { projectId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const { project, workspace } = useProject(projectId);
-  const { settings, requestRun, pendingRun } = useAppStore();
-  const busy = useIsRunning(projectId, 'proposal');
+  const { settings, requestRun, portfolio, assets } = useAppStore();
+  const pending = usePendingRun(projectId, 'proposal');
+  const busy = pending?.status === 'running';
 
   if (!project || !workspace) return null;
 
@@ -198,7 +264,7 @@ export function ProposalPreviewScreen() {
               className="btn"
               type="button"
               onClick={() => requestRun(projectId, 'proposal')}
-              disabled={pendingRun !== null}
+              disabled={pending !== undefined}
             >
               {busy ? '生成中…' : '提案書を生成'}
             </button>
@@ -215,7 +281,7 @@ export function ProposalPreviewScreen() {
 
       <div className="split">
         <nav className="outline card" aria-label="章立て">
-          {PROPOSAL_SECTIONS.map((section, index) => (
+          {PROPOSAL_TEMPLATE.map((section, index) => (
             <a key={section.id} href={`#page-${section.id}`}>
               {String(index + 1).padStart(2, '0')}　{lang === 'ja' ? section.ja : section.en}
             </a>
@@ -223,20 +289,19 @@ export function ProposalPreviewScreen() {
         </nav>
 
         <div className="stack" style={{ gap: 18 }}>
-          {PROPOSAL_SECTIONS.map((section, index) => {
+          {PROPOSAL_TEMPLATE.map((section, index) => {
             const body = sectionBody(section.id, lang, project, workspace, settings);
+            const slots = section.imageSlots.map((slot) => ({
+              slot,
+              images: resolveSlot(slot, workspace, portfolio, assets),
+            }));
+            const hasImages = slots.some(({ images }) => images.length > 0);
             const step = SECTION_STEP[section.id];
             return (
               <article className="proposal-page" id={`page-${section.id}`} key={section.id}>
                 <p className="page-no">PAGE {String(index + 1).padStart(2, '0')}</p>
                 <h3>{lang === 'ja' ? section.ja : section.en}</h3>
-                {body.length > 0 ? (
-                  <div className="stack" style={{ marginTop: 12 }}>
-                    {body.map((line, lineIndex) => (
-                      <p key={lineIndex}>{line}</p>
-                    ))}
-                  </div>
-                ) : (
+                {body.length === 0 && !hasImages ? (
                   <div className="empty" style={{ marginTop: 12 }}>
                     <p className="muted">この章はまだ生成されていません。</p>
                     {step && (
@@ -248,6 +313,17 @@ export function ProposalPreviewScreen() {
                       </Link>
                     )}
                   </div>
+                ) : (
+                  <>
+                    {body.length > 0 && (
+                      <div className="stack" style={{ marginTop: 12 }}>
+                        {body.map((line, lineIndex) => (
+                          <p key={lineIndex}>{line}</p>
+                        ))}
+                      </div>
+                    )}
+                    <SectionSlots section={section} slots={slots} />
+                  </>
                 )}
               </article>
             );
