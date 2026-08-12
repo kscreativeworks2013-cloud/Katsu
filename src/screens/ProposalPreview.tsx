@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { ProposalBody } from '../data/types';
 import { ASSET_ORIGIN_LABEL } from '../domain/assets';
-import type { Lang } from '../domain/markdown';
+import type { Lang } from '../domain/ir';
 import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/proposal';
 import { isProtected } from '../domain/provenance';
 import { staleStepLabels } from '../lib/projects';

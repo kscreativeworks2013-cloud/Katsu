@@ -5,7 +5,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    // テストヘルパー（src/test/）が node:fs でフォント実体を読むため node も含める。
+    // アプリ本体は引き続きブラウザAPIのみを使う。
+    "types": ["vite/client", "node"],
 
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",

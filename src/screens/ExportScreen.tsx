@@ -2,36 +2,44 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { ExportFormat, ExportRecord, Language } from '../data/types';
 import { EXPORT_FORMAT_LABEL, LANGUAGE_LABEL } from '../data/workflow';
-import { markdownFileName, renderMarkdown, type Lang } from '../domain/markdown';
+import { blockingWarnings, buildProposalIR, type Lang, type ProposalIR } from '../domain/ir';
+import { isSupportedFormat, loadRenderer } from '../domain/render';
+import { downloadFile } from '../lib/download';
 import { createId, formatDate } from '../lib/projects';
-import { staleStepLabels } from '../lib/projects';
-import { downloadTextFile } from '../lib/download';
+import { loadJapaneseFont } from '../lib/pdfFont';
 import { useAppStore, useProject } from '../store/context';
 import { Badge, Card, EmptyState, Field, PageHeader } from '../ui/primitives';
 
 const FORMATS: ExportFormat[] = ['pdf', 'pptx', 'docx', 'md'];
-const EXTENSION: Record<ExportFormat, string> = {
-  pdf: 'pdf',
-  pptx: 'pptx',
-  docx: 'docx',
-  md: 'md',
-};
 
-/** 3-11 PDF／PowerPoint出力：確定した提案書をファイルとして書き出す。 */
+/** 3-11 出力：確定した提案書をファイルとして書き出す（第6章のIR経由）。 */
 export function ExportScreen() {
   const { projectId = '' } = useParams();
-  const { project, workspace } = useProject(projectId);
-  const { recordExports, portfolio, assets, settings } = useAppStore();
+  const { project, workspace, provenance } = useProject(projectId);
+  const { recordExports, portfolio, assets } = useAppStore();
   const [formats, setFormats] = useState<ExportFormat[]>(['pdf', 'pptx']);
   const [language, setLanguage] = useState<Language>('both');
   const [template, setTemplate] = useState('standard');
   const [running, setRunning] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!project || !workspace) return null;
 
   const history = workspace.exports;
-  const stale = staleStepLabels(project.steps);
+  const languages: Lang[] = language === 'both' ? ['ja', 'en'] : [language as Lang];
+
+  /** 出力前の点検にも同じ IR を使う。画面の警告と出力物の警告がずれない。 */
+  const previewIr = buildProposalIR({
+    project,
+    workspace,
+    provenance,
+    portfolio,
+    assets,
+    lang: languages[0],
+    builtAt: new Date(0),
+  });
+  const warnings = blockingWarnings(previewIr);
 
   function toggleFormat(format: ExportFormat) {
     setFormats((current) =>
@@ -41,64 +49,79 @@ export function ExportScreen() {
     );
   }
 
-  function run(skipStaleCheck = false) {
-    if (formats.length === 0 || !project) return;
+  async function renderAll(irs: ProposalIR[]): Promise<ExportRecord[]> {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const records: ExportRecord[] = [];
+    // フォントは PDF を選んだときだけ読み込む（第6章 6-6）。
+    const fontBytes = formats.includes('pdf') ? await loadJapaneseFont() : undefined;
 
-    // 古い章があっても出力自体はブロックしない。確認だけ挟む（第4章 4-4）。
-    if (stale.length > 0 && !skipStaleCheck) {
+    for (const format of formats) {
+      const renderer = await loadRenderer(format);
+      for (const ir of irs) {
+        if (!renderer) {
+          // 未対応形式は履歴だけを残す。何が出ていないかを画面で明示する。
+          records.push({
+            id: createId('exp'),
+            fileName: `${ir.project.brand.replace(/\s+/g, '_')}_Proposal_${ir.lang.toUpperCase()}_${ir.revision}.${format}`,
+            format,
+            language: ir.lang,
+            createdAt: stamp,
+            irRevision: ir.revision,
+            rendered: false,
+          });
+          continue;
+        }
+
+        const file = await renderer.render(ir, { fontBytes });
+        downloadFile(file.fileName, file.bytes, file.mimeType);
+        records.push({
+          id: createId('exp'),
+          fileName: file.fileName,
+          format,
+          language: ir.lang,
+          createdAt: stamp,
+          irRevision: ir.revision,
+          rendered: true,
+        });
+      }
+    }
+    return records;
+  }
+
+  function run(skipWarningCheck = false) {
+    if (formats.length === 0 || !project || !workspace) return;
+
+    // 警告があっても出力自体はブロックしない。確認だけ挟む（第4章 4-4、第6章 6-4）。
+    if (warnings.length > 0 && !skipWarningCheck) {
       setConfirming(true);
       return;
     }
 
     setConfirming(false);
+    setError(null);
     setRunning(true);
-    const languages: Lang[] = language === 'both' ? ['ja', 'en'] : [language as Lang];
-    const generatedAt = new Date();
-    const stamp = generatedAt.toISOString().slice(0, 10);
 
-    const created: ExportRecord[] = formats.flatMap((format) =>
-      languages.map((code) => ({
-        id: createId('exp'),
-        fileName:
-          format === 'md'
-            ? markdownFileName(project, code)
-            : `${project.brand.replace(/\s+/g, '_')}_Proposal_${code.toUpperCase()}.${EXTENSION[format]}`,
-        format,
-        language: code,
-        createdAt: stamp,
-      })),
+    const builtAt = new Date();
+    const irs = languages.map((lang) =>
+      buildProposalIR({ project, workspace, provenance, portfolio, assets, lang, builtAt }),
     );
 
-    // Markdown は実ファイルとして書き出す。他形式はサーバー側生成に接続するまで履歴のみ。
-    if (formats.includes('md') && workspace) {
-      for (const code of languages) {
-        downloadTextFile(
-          markdownFileName(project, code),
-          renderMarkdown({
-            project,
-            workspace,
-            portfolio,
-            assets,
-            settings,
-            lang: code,
-            generatedAt,
-          }),
-          'text/markdown',
-        );
-      }
-    }
-
-    setTimeout(() => {
-      recordExports(projectId, created);
-      setRunning(false);
-    }, 600);
+    renderAll(irs)
+      .then((records) => {
+        recordExports(projectId, records);
+        setRunning(false);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : '出力に失敗しました');
+        setRunning(false);
+      });
   }
 
   return (
     <>
       <PageHeader
-        title="PDF／PowerPoint出力"
-        lead="選んだ形式と言語の組み合わせで、提案書をまとめて書き出します。Markdown は実ファイルとしてダウンロードされます。"
+        title="出力"
+        lead="提案書は中間表現（Proposal IR）を経由して書き出します。ここでは生成を行いません。"
       />
 
       <Card title="出力設定">
@@ -114,7 +137,9 @@ export function ExportScreen() {
                   onChange={() => toggleFormat(format)}
                 />
                 {EXPORT_FORMAT_LABEL[format]}
-                {format !== 'md' && <span className="muted">（履歴のみ）</span>}
+                {!isSupportedFormat(format) && (
+                  <span className="muted">（未対応・履歴のみ）</span>
+                )}
               </label>
             ))}
           </div>
@@ -141,7 +166,12 @@ export function ExportScreen() {
           </Field>
         </div>
 
-        <div className="actions" style={{ marginTop: 20 }}>
+        <p className="muted" style={{ marginTop: 16 }}>
+          出力予定の版：{previewIr.revision}（章 {previewIr.sections.length}
+          件／参照した生成ライン {previewIr.sources.runIds.length}件）
+        </p>
+
+        <div className="actions" style={{ marginTop: 16 }}>
           <button
             className="btn"
             type="button"
@@ -158,11 +188,22 @@ export function ExportScreen() {
                 : ''}
           </span>
         </div>
+
+        {error && (
+          <p className="form-error" role="alert" style={{ marginTop: 14 }}>
+            {error}
+          </p>
+        )}
       </Card>
 
       {confirming && (
-        <Card title="古い内容のまま出力しますか">
-          <p className="lede">上流の変更が反映されていない章があります：{stale.join('、')}</p>
+        <Card title="このまま出力しますか">
+          <p className="lede">出力前に確認が必要な項目があります。</p>
+          <ul className="stack" style={{ margin: '12px 0 0', paddingLeft: 18 }}>
+            {warnings.map((warning, index) => (
+              <li key={index}>{warning.message}</li>
+            ))}
+          </ul>
           <div className="actions" style={{ marginTop: 16 }}>
             <button className="btn" type="button" onClick={() => run(true)}>
               このまま出力する
@@ -182,7 +223,7 @@ export function ExportScreen() {
         {history.length === 0 ? (
           <EmptyState
             title="まだ出力していません"
-            description="出力すると、ここから再ダウンロードできます。"
+            description="出力すると、ここから版と形式を確認できます。"
           />
         ) : (
           <div className="table-scroll">
@@ -192,8 +233,8 @@ export function ExportScreen() {
                   <th>ファイル名</th>
                   <th>形式</th>
                   <th>言語</th>
+                  <th>版</th>
                   <th>出力日</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -201,15 +242,14 @@ export function ExportScreen() {
                   <tr key={record.id}>
                     <td>{record.fileName}</td>
                     <td>
-                      <Badge>{EXPORT_FORMAT_LABEL[record.format]}</Badge>
+                      <Badge tone={record.rendered === false ? 'alert' : 'neutral'}>
+                        {EXPORT_FORMAT_LABEL[record.format]}
+                        {record.rendered === false && '（未生成）'}
+                      </Badge>
                     </td>
                     <td>{LANGUAGE_LABEL[record.language]}</td>
+                    <td>{record.irRevision ?? '—'}</td>
                     <td>{formatDate(record.createdAt)}</td>
-                    <td>
-                      <button className="btn btn--ghost btn--small" type="button" disabled>
-                        再ダウンロード
-                      </button>
-                    </td>
                   </tr>
                 ))}
               </tbody>

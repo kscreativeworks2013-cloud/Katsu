@@ -220,6 +220,10 @@ export interface ExportRecord {
   format: ExportFormat;
   language: Language;
   createdAt: string;
+  /** 出力元の Proposal IR の版（第6章 6-3）。どの版を出したかを後から照合できる。 */
+  irRevision?: string;
+  /** 実ファイルを書き出せたか。未対応形式は履歴のみ。 */
+  rendered?: boolean;
 }
 
 /**
