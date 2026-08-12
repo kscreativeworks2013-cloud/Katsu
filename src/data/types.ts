@@ -4,6 +4,8 @@
  * すべて provenance を根拠に決まる（第4章 4-1、4-3）。
  */
 
+import type { StepStatus as StepStatusValue } from '../domain/steps';
+
 /** 案件内ワークフローのステップ。第4章 4-8 のとおり、この構成は暫定で変更を許容する。 */
 export type StepId =
   | 'brand'
@@ -15,11 +17,9 @@ export type StepId =
   | 'proposal'
   | 'export';
 
-/**
- * review（確認待ち）は Run が完了し差分プレビューが未適用の状態。
- * 「適用するまで書き込まない」（第4章 4-3）を語彙として持つ。
- */
-export type StepStatus = 'todo' | 'running' | 'review' | 'done';
+// ステップの状態語彙はステップ定義と同じ場所（domain/steps.ts）が持つ。
+// ここでは StepRecord のために取り込み、既存の参照のために再エクスポートする。
+export type { StepStatus } from '../domain/steps';
 
 /** フィールドの出自。第4章 4-1。 */
 export type FieldOrigin = 'generated' | 'edited' | 'empty';
@@ -52,7 +52,7 @@ export interface Run {
 }
 
 export interface StepRecord {
-  status: StepStatus;
+  status: StepStatusValue;
   lastRunId: string | null;
   /** 上流の再生成により内容が古い可能性がある状態。データは無効化しない（第4章 4-4）。 */
   stale: boolean;

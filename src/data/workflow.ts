@@ -1,14 +1,7 @@
-import type { ExportFormat, Language, ProjectStatus, PromptTarget, StepStatus } from './types';
+import type { ExportFormat, Language, ProjectStatus, PromptTarget } from './types';
 
-// ステップ定義（順序・依存・出力フィールド）は src/domain/steps.ts にある。
-// この module は表示用のラベルと選択肢だけを持つ。
-
-export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
-  todo: '未着手',
-  running: '生成中',
-  review: '確認待ち',
-  done: '完了',
-};
+// ステップ定義（順序・依存・出力フィールド）と状態語彙は src/domain/steps.ts にある。
+// この module は案件・出力まわりの表示用ラベルと選択肢だけを持つ。
 
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   draft: '下書き',

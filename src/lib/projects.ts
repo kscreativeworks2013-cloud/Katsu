@@ -3,8 +3,8 @@
  * 端のケースはここでテストする。
  */
 
-import type { Project, StepId, StepRecord, StepStatus } from '../data/types';
-import { STEP_BY_ID, WORKFLOW_STEPS } from '../domain/steps';
+import type { Project, StepId, StepRecord } from '../data/types';
+import { STEP_BY_ID, WORKFLOW_STEPS, type StepStatus } from '../domain/steps';
 
 /** 完了ステップの割合（0〜100の整数）。生成中は半分の重みで数える。 */
 export function workflowProgress(steps: Record<StepId, StepRecord>): number {

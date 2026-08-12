@@ -1,6 +1,5 @@
 import { Link, NavLink, Outlet, useMatch, useParams } from 'react-router-dom';
-import { STEP_STATUS_LABEL } from '../data/workflow';
-import { STEP_BY_ID, WORKFLOW_STEPS } from '../domain/steps';
+import { STEP_BY_ID, STEP_STATUS_LABEL, WORKFLOW_STEPS } from '../domain/steps';
 import { staleStepIds, unmetPrerequisites } from '../lib/projects';
 import { runKey, useAppStore, useProject } from '../store/context';
 import { EmptyState } from '../ui/primitives';

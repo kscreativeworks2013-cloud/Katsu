@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { renderApp } from '../test/render';
@@ -44,5 +44,35 @@ describe('永続化', () => {
     const saved = loadState();
     expect(saved?.version).toBe(2);
     expect(saved?.provenance['prj-maison']['brand.tone'].origin).toBe('edited');
+  });
+});
+
+// (D) 確認済みの判断は表示上のフラグではなく、リロードをまたいで残る記録であること。
+describe('stale の確認済みの永続化', () => {
+  it('は「確認済み」の判断をリロード後も保持する', async () => {
+    const user = userEvent.setup();
+    const first = renderApp('/projects/prj-maison/brand');
+
+    await user.type(screen.getByLabelText('トーン＆マナー'), '追記');
+    const banner = screen.getByRole('region', { name: '内容が古い可能性のあるステップ' });
+    for (const button of within(banner).getAllByRole('button', {
+      name: '確認済みにする（再生成不要）',
+    })) {
+      await user.click(button);
+    }
+
+    const saved = loadState();
+    const competitors = saved?.projects.find((item) => item.id === 'prj-maison')?.steps
+      .competitors;
+    expect(competitors?.stale).toBe(false);
+    expect(competitors?.staleAcknowledgedAt).toBeTruthy();
+    expect(competitors?.staleAcknowledgedCause).toBe('brand');
+
+    first.unmount();
+    renderApp('/projects/prj-maison/brand');
+
+    expect(
+      screen.queryByRole('region', { name: '内容が古い可能性のあるステップ' }),
+    ).not.toBeInTheDocument();
   });
 });

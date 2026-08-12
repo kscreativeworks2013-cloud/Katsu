@@ -8,6 +8,22 @@
 import type { PortfolioWork, Project, Settings, StepId, Workspace } from '../data/types';
 import { PROPOSAL_TEMPLATE } from './proposal';
 
+/**
+ * ステップの状態語彙（第4章 4-1）。
+ * review（確認待ち）は Run が完了し、差分プレビューが未適用の状態。
+ * 「適用するまで書き込まない」という中核状態を、生成中（running）と区別して持つ。
+ */
+export type StepStatus = 'todo' | 'running' | 'review' | 'done';
+
+export const STEP_STATUSES: StepStatus[] = ['todo', 'running', 'review', 'done'];
+
+export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
+  todo: '未着手',
+  running: '生成中',
+  review: '確認待ち',
+  done: '完了',
+};
+
 /** 案件に紐づかない全体入力。見積もり単価や引用元の作品はここから渡す。 */
 export interface RunContext {
   settings: Settings;

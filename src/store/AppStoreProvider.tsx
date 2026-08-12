@@ -21,7 +21,7 @@ import type {
 } from '../data/types';
 import { fitThumbnail } from '../domain/assets';
 import { readField, sameValue, writeField } from '../domain/fields';
-import { markEdited } from '../domain/provenance';
+import { acknowledgeStaleRecord, markEdited } from '../domain/provenance';
 import { applyValues, buildDiff, defaultSelection } from '../domain/run';
 import { WORKFLOW_STEPS, downstreamSteps, inputsHash } from '../domain/steps';
 import type { GenerationEngine } from '../engine/types';
@@ -451,21 +451,10 @@ export function AppStoreProvider({
   const acknowledgeStale = useCallback(
     (projectId: string, stepId: StepId) => {
       const at = nowIso();
-      patchSteps(projectId, (steps) => {
-        const record = steps[stepId];
-        if (!record.stale) return steps;
-        return {
-          ...steps,
-          [stepId]: {
-            status: record.status,
-            lastRunId: record.lastRunId,
-            stale: false,
-            // 判断の記録。次の上流変化で cascadeStale がこの記録ごと上書きする。
-            staleAcknowledgedAt: at,
-            staleAcknowledgedCause: record.staleCause,
-          },
-        };
-      });
+      patchSteps(projectId, (steps) => ({
+        ...steps,
+        [stepId]: acknowledgeStaleRecord(steps[stepId], at),
+      }));
     },
     [patchSteps],
   );

@@ -3,7 +3,7 @@
  * 「上書きしてよいか」の判定はここだけが持つ。画面もストアもこの関数群を通す。
  */
 
-import type { FieldMeta, Provenance } from '../data/types';
+import type { FieldMeta, Provenance, StepRecord } from '../data/types';
 
 const UNKNOWN: FieldMeta = { origin: 'empty', runId: null, updatedAt: '' };
 
@@ -41,4 +41,28 @@ export function markEdited(provenance: Provenance, path: string, at: string): Pr
 /** 指定範囲のうち手動編集済みのパス。 */
 export function editedPaths(provenance: Provenance, paths: string[]): string[] {
   return paths.filter((path) => isProtected(provenance, path));
+}
+
+/*
+ * stale の「確認済み」（第4章 4-4）。
+ * 値の出自ではなくステップ単位の人の判断なので、FieldMeta ではなくステップ記録に持つ。
+ * 記録するのは判断時刻と、そのとき古くしていた上流ステップ。次に上流が変化すると
+ * cascadeStale がこの記録ごと上書きし、再び stale に戻る。
+ */
+
+/** 「確認したが再生成不要」を記録する。stale でないステップは変更しない。 */
+export function acknowledgeStaleRecord(record: StepRecord, at: string): StepRecord {
+  if (!record.stale) return record;
+  return {
+    status: record.status,
+    lastRunId: record.lastRunId,
+    stale: false,
+    staleAcknowledgedAt: at,
+    staleAcknowledgedCause: record.staleCause,
+  };
+}
+
+/** 確認済みの判断が残っているか。 */
+export function isStaleAcknowledged(record: StepRecord): boolean {
+  return record.staleAcknowledgedAt !== undefined;
 }
