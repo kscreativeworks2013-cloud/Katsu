@@ -60,21 +60,42 @@ export function loadState(): PersistedState | null {
   }
 }
 
-export function saveState(state: Omit<PersistedState, 'version'>): void {
+/**
+ * 保存の結果（第6章 6-9）。
+ * 画像は「メモリ上で継続」がリロード時の消失を意味するため、テキストと同じ扱いにはできない。
+ * 退避や失敗は必ず呼び出し側へ返し、画面で伝える。
+ */
+export type SaveOutcome =
+  | { status: 'saved' }
+  | { status: 'unavailable' }
+  | { status: 'degraded'; message: string }
+  | { status: 'failed'; message: string };
+
+export function saveState(state: Omit<PersistedState, 'version'>): SaveOutcome {
   const store = storage();
-  if (!store) return;
+  if (!store) return { status: 'unavailable' };
 
   const write = (payload: Omit<PersistedState, 'version'>) =>
     store.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...payload }));
 
   try {
     write(state);
+    return { status: 'saved' };
   } catch {
     // 容量超過。サムネイルを退避して再試行する（メタデータと参照は保持）。
     try {
       write({ ...state, assets: stripThumbnails(state.assets) });
+      return {
+        status: 'degraded',
+        message:
+          '保存容量が足りないため、画像の保存を解除しました。案件と文章は保存されています。画像を登録し直す前に、不要な画像を解除してください。',
+      };
     } catch {
-      // それでも失敗した場合は保存を諦め、操作は続行させる。
+      return {
+        status: 'failed',
+        message:
+          '保存容量が足りず、変更を保存できていません。このまま操作を続けると、リロード時に失われます。',
+      };
     }
   }
 }

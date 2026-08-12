@@ -1,4 +1,5 @@
 import type { Language, ModelAssignment } from '../data/types';
+import { storageUsage } from '../domain/assets';
 import { LANGUAGE_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
 import { useAppStore } from '../store/context';
@@ -6,7 +7,8 @@ import { Card, Field, PageHeader } from '../ui/primitives';
 
 /** 3-13 設定：AIモデル、言語、会社情報、見積もり基準を一元管理する。 */
 export function SettingsScreen() {
-  const { settings, updateSettings } = useAppStore();
+  const { settings, updateSettings, assets } = useAppStore();
+  const usage = storageUsage(assets);
 
   function updateModel(id: string, patch: Partial<ModelAssignment>) {
     updateSettings({
@@ -108,6 +110,31 @@ export function SettingsScreen() {
             </tbody>
           </table>
         </div>
+      </Card>
+
+      <Card
+        title="画像の保存容量"
+        description="ブラウザ内（localStorage）に保存できる画像の量です。原寸の保存は次フェーズで対応します。"
+      >
+        <p className="lede">
+          {Math.round(usage.bytes / 1000).toLocaleString()}KB /{' '}
+          {Math.round(usage.budgetBytes / 1000).toLocaleString()}KB（
+          {Math.round(usage.ratio * 100)}% 使用）
+        </p>
+        <span className="meter" style={{ width: '100%', marginTop: 8 }} aria-hidden="true">
+          <span style={{ width: `${Math.min(100, Math.round(usage.ratio * 100))}%` }} />
+        </span>
+        <p className="muted" style={{ marginTop: 10 }}>
+          保存済み {usage.storedCount}件／参照のみ {usage.referenceOnlyCount}件
+          （参照のみの画像は PDF・PowerPoint に含まれません）
+        </p>
+        {usage.level !== 'ok' && (
+          <p className="form-error" role="status" style={{ marginTop: 12 }}>
+            {usage.level === 'full'
+              ? '容量がいっぱいです。新しい画像を登録する前に、不要な画像を解除してください。'
+              : '容量が残りわずかです。不要な画像の解除を検討してください。'}
+          </p>
+        )}
       </Card>
 
       <Card title="既定値">

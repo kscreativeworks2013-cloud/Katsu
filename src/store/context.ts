@@ -11,6 +11,7 @@ import type {
   Workspace,
 } from '../data/types';
 import type { FieldDiff } from '../domain/run';
+import type { SaveOutcome } from './persistence';
 
 /** 新規案件フォームが渡す値。未入力の項目は既定値で埋める。 */
 export type NewProjectInput = Pick<Project, 'name' | 'client' | 'brand'> &
@@ -47,6 +48,8 @@ export interface AppStore {
   portfolio: PortfolioWork[];
   settings: Settings;
   pendingRuns: Record<string, PendingRun>;
+  /** 直近の保存結果。容量不足を黙って飲み込まないための状態（第6章 6-9）。 */
+  saveOutcome: SaveOutcome;
 
   createProject: (input: NewProjectInput) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
@@ -66,7 +69,11 @@ export interface AppStore {
   setAdoptedConcept: (projectId: string, conceptId: string) => void;
   recordExports: (projectId: string, records: ExportRecord[]) => void;
 
-  registerAsset: (asset: Omit<Asset, 'id' | 'createdAt'>) => Asset;
+  /** 登録結果。rejected があれば、その理由を必ず画面に出すこと（第6章 6-9）。 */
+  registerAsset: (asset: Omit<Asset, 'id' | 'createdAt'>) => {
+    asset: Asset;
+    rejected?: string;
+  };
   addPortfolioWork: (work: Omit<PortfolioWork, 'id'>) => void;
   updatePortfolioWork: (workId: string, patch: Partial<PortfolioWork>) => void;
   removePortfolioWork: (workId: string) => void;

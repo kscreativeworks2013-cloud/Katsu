@@ -1,4 +1,5 @@
 import { Link, Outlet, useLocation, useMatch } from 'react-router-dom';
+import { storageUsage } from '../domain/assets';
 import { WORKFLOW_STEPS } from '../domain/steps';
 import { useAppStore } from '../store/context';
 import { Sidebar } from './Sidebar';
@@ -34,7 +35,8 @@ function useCrumbs(): string[] {
  */
 export function AppShell() {
   const crumbs = useCrumbs();
-  const { projects } = useAppStore();
+  const { projects, assets, saveOutcome } = useAppStore();
+  const usage = storageUsage(assets);
   const match = useMatch('/projects/:projectId/*');
   const project = projects.find((item) => item.id === match?.params.projectId);
 
@@ -59,6 +61,19 @@ export function AppShell() {
           )}
         </header>
         <main className="content">
+          {/* 保存できていない状態を黙って続けない（第6章 6-9）。 */}
+          {(saveOutcome.status === 'degraded' || saveOutcome.status === 'failed') && (
+            <p className="form-error" role="alert">
+              {saveOutcome.message}
+            </p>
+          )}
+          {saveOutcome.status !== 'failed' && usage.level !== 'ok' && (
+            <p className="form-error" role="status">
+              {usage.level === 'full'
+                ? '画像の保存容量がいっぱいです。新しい画像は保存できません。不要な画像を解除してください。'
+                : `画像の保存容量が残りわずかです（${Math.round(usage.ratio * 100)}% 使用）。`}
+            </p>
+          )}
           <Outlet />
         </main>
       </div>

@@ -19,7 +19,7 @@ import type {
   StepRecord,
   Workspace,
 } from '../data/types';
-import { fitThumbnail } from '../domain/assets';
+import { decideThumbnail } from '../domain/assets';
 import { readField, sameValue, writeField } from '../domain/fields';
 import { acknowledgeStaleRecord, markEdited } from '../domain/provenance';
 import { applyValues, buildDiff, defaultSelection } from '../domain/run';
@@ -34,7 +34,7 @@ import {
   type NewProjectInput,
   type PendingRun,
 } from './context';
-import { loadState, saveState } from './persistence';
+import { loadState, saveState, type SaveOutcome } from './persistence';
 
 const EMPTY_CREATIVE: Project['creative'] = {
   worldview: '',
@@ -102,6 +102,8 @@ export function AppStoreProvider({
   );
   const [settings, setSettings] = useState<Settings>(persisted?.settings ?? defaultSettings);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingRun>>({});
+  const [saveOutcome, setSaveOutcome] = useState<SaveOutcome>({ status: 'saved' });
+  const reportedStatus = useRef<SaveOutcome['status']>('saved');
 
   // 生成完了時に最新の状態で差分を取るための参照。レンダー中には触らない。
   const latest = useRef({ projects, workspaces, provenance, pendingRuns, settings, portfolio });
@@ -110,7 +112,22 @@ export function AppStoreProvider({
   });
 
   useEffect(() => {
-    saveState({ projects, workspaces, provenance, runs, assets, portfolio, settings });
+    // 書き込み自体は同期。状態変化のたびに確実に保存する。
+    const outcome = saveState({
+      projects,
+      workspaces,
+      provenance,
+      runs,
+      assets,
+      portfolio,
+      settings,
+    });
+
+    // 結果の通知だけを描画の外へ出す。保存できていないことは必ず画面に出す（第6章 6-9）。
+    if (outcome.status !== reportedStatus.current) {
+      reportedStatus.current = outcome.status;
+      queueMicrotask(() => setSaveOutcome(outcome));
+    }
   }, [projects, workspaces, provenance, runs, assets, portfolio, settings]);
 
   const patchSteps = useCallback(
@@ -514,15 +531,16 @@ export function AppStoreProvider({
 
   const registerAsset = useCallback(
     (input: Omit<Asset, 'id' | 'createdAt'>) => {
+      // 収まらない場合は理由を返し、呼び出し側が必ず利用者に見せる（第6章 6-9）。
+      const decision = decideThumbnail(assets, input.thumbnail);
       const asset: Asset = {
         ...input,
-        // サムネイルは容量方針（第5章 5-1）に収まるものだけ保持する。
-        thumbnail: fitThumbnail(assets, input.thumbnail),
+        thumbnail: decision.thumbnail,
         id: createId('ast'),
         createdAt: nowIso(),
       };
       setAssets((current) => ({ ...current, [asset.id]: asset }));
-      return asset;
+      return { asset, rejected: decision.rejected };
     },
     [assets],
   );
@@ -555,6 +573,7 @@ export function AppStoreProvider({
       portfolio,
       settings,
       pendingRuns,
+      saveOutcome,
       createProject,
       updateProject,
       requestRun,
@@ -580,6 +599,7 @@ export function AppStoreProvider({
       portfolio,
       settings,
       pendingRuns,
+      saveOutcome,
       createProject,
       updateProject,
       requestRun,

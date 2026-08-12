@@ -39,7 +39,7 @@ export function AssetPicker({
     const outcome = await importImageFromUrl(trimmed);
     setImporting(false);
 
-    const created = registerAsset({
+    const { asset: created, rejected } = registerAsset({
       origin: 'external',
       label,
       source: trimmed,
@@ -50,7 +50,8 @@ export function AssetPicker({
     onChange(created.id);
     setNotice(
       outcome.image
-        ? null
+        ? // 取り込めても保存容量に収まらないことがある。その場合も理由を必ず出す（第6章 6-9）。
+          (rejected ?? null)
         : `画像を取り込めませんでした：${outcome.reason}。参照は残りますが、PDF・PowerPoint には含まれません。`,
     );
     setUrl('');
@@ -63,16 +64,16 @@ export function AssetPicker({
 
     const reader = new FileReader();
     reader.addEventListener('load', () => {
-      const created = registerAsset({
+      const { asset: created, rejected } = registerAsset({
         origin: 'upload',
         label,
         source: file.name,
         runId: null,
         mimeType: file.type || 'image/*',
-        // 容量上限を超えるサムネイルはストア側で落とされる。参照は残る。
         thumbnail: typeof reader.result === 'string' ? reader.result : undefined,
       });
       onChange(created.id);
+      setNotice(rejected ?? null);
       setOpen(false);
     });
     reader.readAsDataURL(file);
@@ -122,26 +123,9 @@ export function AssetPicker({
 
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <label className="field">
-        <span>画像URL</span>
-        <input
-          type="url"
-          value={url}
-          placeholder="https://"
-          onChange={(event) => setUrl(event.target.value)}
-        />
-      </label>
       <div className="row">
         <button
           className="btn btn--small"
-          type="button"
-          onClick={() => void registerUrl()}
-          disabled={!url.trim() || importing}
-        >
-          {importing ? '取り込み中…' : 'URLを登録'}
-        </button>
-        <button
-          className="btn btn--ghost btn--small"
           type="button"
           onClick={() => fileRef.current?.click()}
         >
@@ -153,6 +137,28 @@ export function AssetPicker({
           onClick={() => setOpen(false)}
         >
           やめる
+        </button>
+      </div>
+      <label className="field">
+        <span>画像URL（任意）</span>
+        <input
+          type="url"
+          value={url}
+          placeholder="https://"
+          onChange={(event) => setUrl(event.target.value)}
+        />
+      </label>
+      <p className="muted">
+        外部URLはブラウザのCORS制限で取り込めないことが多く、その場合は成果物に含まれません。確実に含めるにはファイル登録を使ってください。（サーバー経由での取得は次フェーズ）
+      </p>
+      <div className="row">
+        <button
+          className="btn btn--ghost btn--small"
+          type="button"
+          onClick={() => void registerUrl()}
+          disabled={!url.trim() || importing}
+        >
+          {importing ? '取り込み中…' : 'URLから取り込む'}
         </button>
       </div>
       <input

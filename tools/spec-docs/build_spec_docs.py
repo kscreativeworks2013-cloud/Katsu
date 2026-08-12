@@ -35,7 +35,7 @@ SPEC_DIR = REPO_ROOT / "docs" / "spec"
 DEFAULT_OUT = REPO_ROOT / "dist" / "spec-docs"
 
 DOC_TITLE = "Luxury Beauty Visual Proposal OS"
-DOC_SUBTITLE = "仕様書｜第1〜6章"
+DOC_SUBTITLE = "仕様書｜第1〜7章"
 DOC_LEAD = "この資料は docs/spec/ の内容から自動生成した現時点の仕様書です。"
 
 BASENAME = "Luxury_Beauty_Visual_Proposal_OS_仕様書"
