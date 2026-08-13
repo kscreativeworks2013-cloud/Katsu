@@ -1,11 +1,16 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { defaultSettings, seedPortfolio, seedProjects, seedWorkspaces } from '../../src/data/fixtures';
+import {
+  defaultSettings,
+  seedPortfolio,
+  seedProjects,
+  seedWorkspaces,
+} from '../../src/data/fixtures';
 import { generateProposalBody } from '../../src/data/proposalBody';
 import type { Asset, Workspace } from '../../src/data/types';
 import { buildProposalIR, type ProposalIR } from '../../src/domain/ir';
-import { LAYOUT_VARIANTS } from '../../src/domain/render/layout';
+import { ADOPTED_LAYOUT } from '../../src/domain/render/layout';
 import { renderLayoutPdf } from '../../src/domain/render/pdfLayout';
 import { loadTestFont } from '../../src/test/ir';
 
@@ -42,7 +47,12 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
  * 写真の代わりに置くグラデーション。実写ではないが、面のどこを画像が占めるかは判定できる。
  * 版面の比較に必要なのは被写体ではなく、面積・トーン・並びの関係である。
  */
-function gradientPng(width: number, height: number, from: [number, number, number], to: [number, number, number]): string {
+function gradientPng(
+  width: number,
+  height: number,
+  from: [number, number, number],
+  to: [number, number, number],
+): string {
   const raw = new Uint8Array(height * (width * 3 + 1));
   for (let y = 0; y < height; y += 1) {
     const row = y * (width * 3 + 1);
@@ -77,12 +87,30 @@ function gradientPng(width: number, height: number, from: [number, number, numbe
 
 /** ブランドのトーンに寄せた見本。タイルごとに少しずつ振って、並べたときの差が見えるようにする。 */
 const TONES: [number, number, number][][] = [
-  [[236, 226, 212], [176, 146, 110]],
-  [[62, 56, 50], [148, 126, 104]],
-  [[214, 198, 186], [120, 92, 74]],
-  [[240, 236, 228], [198, 170, 132]],
-  [[92, 78, 70], [212, 188, 160]],
-  [[224, 210, 190], [96, 78, 62]],
+  [
+    [236, 226, 212],
+    [176, 146, 110],
+  ],
+  [
+    [62, 56, 50],
+    [148, 126, 104],
+  ],
+  [
+    [214, 198, 186],
+    [120, 92, 74],
+  ],
+  [
+    [240, 236, 228],
+    [198, 170, 132],
+  ],
+  [
+    [92, 78, 70],
+    [212, 188, 160],
+  ],
+  [
+    [224, 210, 190],
+    [96, 78, 62],
+  ],
 ];
 
 /** 全スロットにアセットを結びつけた案件データ。版面の比較には画像が要る。 */
@@ -154,7 +182,7 @@ function inject(ir: ProposalIR): ProposalIR {
 }
 
 describe('版面案の書き出し', () => {
-  it('は同じ案件データから3本の PDF を出す', async () => {
+  it('は採用版面の PDF を書き出す', async () => {
     const project = seedProjects[0];
     const { workspace, assets } = projectWithImages();
     const fontBytes = loadTestFont();
@@ -172,12 +200,10 @@ describe('版面案の書き出し', () => {
     );
 
     mkdirSync(OUT_DIR, { recursive: true });
-    for (const variant of LAYOUT_VARIANTS) {
-      const bytes = await renderLayoutPdf(ir, { variant, fontBytes });
-      const path = `${OUT_DIR}/${variant.id}.pdf`;
-      writeFileSync(path, bytes);
-      expect(bytes.length).toBeGreaterThan(5000);
-      console.log(`${variant.label}: ${path}（${Math.round(bytes.length / 1000)}KB）`);
-    }
+    const bytes = await renderLayoutPdf(ir, { fontBytes });
+    const path = `${OUT_DIR}/${ADOPTED_LAYOUT.id}.pdf`;
+    writeFileSync(path, bytes);
+    expect(bytes.length).toBeGreaterThan(5000);
+    console.log(`${ADOPTED_LAYOUT.label}: ${path}（${Math.round(bytes.length / 1000)}KB）`);
   });
 });

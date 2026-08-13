@@ -8,7 +8,7 @@
 import type { Asset, PortfolioWork, Workspace } from '../data/types';
 import { resolveAsset } from './assets';
 
-export type SlotSource = 'logo' | 'moodboard' | 'shots' | 'portfolio';
+export type SlotSource = 'logo' | 'moodboard' | 'shots' | 'portfolio' | 'competitors';
 
 export interface ImageSlot {
   id: string;
@@ -67,7 +67,21 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       },
     ],
   },
-  { id: 'competitors', ja: '競合分析', en: 'Competitive Landscape', imageSlots: [] },
+  {
+    id: 'competitors',
+    ja: '競合分析',
+    en: 'Competitive Landscape',
+    imageSlots: [
+      // 競合はビジュアルで比較する面にする。文章だけの面にしない（第8章 8-5）。
+      {
+        id: 'competitor-refs',
+        label: '競合のビジュアル',
+        source: 'competitors',
+        capacity: 3,
+        printWidthMm: 90,
+      },
+    ],
+  },
   {
     id: 'concept',
     ja: '撮影コンセプト',
@@ -156,6 +170,12 @@ export function resolveSlot(
         key: `${slot.id}-${shot.id}`,
         caption: `Cut ${shot.no}｜${shot.subject}`,
         asset: resolveAsset(assets, shot.assetId),
+      }));
+    case 'competitors':
+      return workspace.competitors.slice(0, slot.capacity).map((competitor) => ({
+        key: `${slot.id}-${competitor.id}`,
+        caption: `${competitor.name}｜${competitor.visual}`,
+        asset: resolveAsset(assets, competitor.assetId),
       }));
     case 'portfolio':
       return portfolio.slice(0, slot.capacity).map((work) => ({

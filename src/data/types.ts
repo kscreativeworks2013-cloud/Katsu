@@ -176,6 +176,8 @@ export interface Competitor {
   tone: string;
   strength: string;
   weakness: string;
+  /** 競合のビジュアル参照。未登録なら比較面ではプレースホルダになる（第8章 8-5）。 */
+  assetId?: string | null;
   /** ポジショニングマップ座標。0=クラシック/ミニマル、1=モダン/ドラマティック。 */
   x: number;
   y: number;

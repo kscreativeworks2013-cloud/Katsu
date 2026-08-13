@@ -41,6 +41,7 @@
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.9.0",
     "jsdom": "^30.0.1",
+    "pdfjs-dist": "^6.2.108",
     "prettier": "^3.9.6",
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.67.0",

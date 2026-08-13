@@ -3,7 +3,6 @@
  *
  * 位置と大きさは判型に対する**比率**で持ち、実寸（ポイント）への展開はレンダラが行う。
  * これにより 16:9 は A4横の版面からの派生になり、版面定義を判型ごとに書き分けずに済む。
- * 比率で表せないもの（本文の最小可読サイズ）だけを絶対値で持つ。
  */
 
 export interface PageFormat {
@@ -11,6 +10,7 @@ export interface PageFormat {
   widthPt: number;
   heightPt: number;
   widthMm: number;
+  heightMm: number;
 }
 
 const MM_PER_PT = 25.4 / 72;
@@ -20,6 +20,7 @@ export const A4_LANDSCAPE: PageFormat = {
   widthPt: 841.89,
   heightPt: 595.28,
   widthMm: 297,
+  heightMm: 210,
 };
 
 /** PowerPoint と同じ 16:9。A4横の版面をそのまま流し込む先（第8章 8-2）。 */
@@ -28,6 +29,7 @@ export const SCREEN_16_9: PageFormat = {
   widthPt: 960,
   heightPt: 540,
   widthMm: 960 * MM_PER_PT,
+  heightMm: 540 * MM_PER_PT,
 };
 
 /** 版面内の矩形。左上原点・0..1 の比率で持つ（PDF の座標系への変換はレンダラ側）。 */
@@ -43,13 +45,11 @@ export function toPoints(
   rect: Rect,
   format: PageFormat,
 ): { x: number; y: number; width: number; height: number } {
-  const width = rect.w * format.widthPt;
-  const height = rect.h * format.heightPt;
   return {
     x: rect.x * format.widthPt,
     y: format.heightPt - (rect.y + rect.h) * format.heightPt,
-    width,
-    height,
+    width: rect.w * format.widthPt,
+    height: rect.h * format.heightPt,
   };
 }
 
@@ -58,71 +58,72 @@ export function widthToMm(ratio: number, format: PageFormat): number {
   return Math.round(ratio * format.widthMm);
 }
 
-export type CoverStyle = 'full-bleed' | 'split' | 'stack';
-export type ShotStyle = 'filmstrip' | 'grid';
+/**
+ * 印刷の安全マージン（mm）。文字はこれより内側に置く。
+ * 裁ち落としの画像は面いっぱいに敷いてよいが、読ませる要素は必ずこの内側。
+ */
+export const SAFE_MARGIN_MM = 15;
 
-export interface LayoutVariant {
-  id: 'editorial' | 'gallery' | 'contact';
+export function safeMargin(format: PageFormat): { x: number; y: number } {
+  return { x: SAFE_MARGIN_MM / format.widthMm, y: SAFE_MARGIN_MM / format.heightMm };
+}
+
+/**
+ * 章ごとの扱い（第8章 8-5）。
+ * ・visual：画像が面を支配する。前半（提案の見せ場）。
+ * ・dense：情報密度を優先する。後半（実務の詰め）。
+ */
+export type SectionMode = 'visual' | 'dense';
+
+export const SECTION_MODE: Record<string, SectionMode> = {
+  cover: 'visual',
+  brand: 'visual',
+  competitors: 'visual',
+  concept: 'visual',
+  moodboard: 'visual',
+  shots: 'dense',
+  lighting: 'dense',
+  works: 'dense',
+  staff: 'dense',
+  schedule: 'dense',
+  budget: 'dense',
+  risk: 'dense',
+};
+
+export function sectionMode(sectionId: string): SectionMode {
+  return SECTION_MODE[sectionId] ?? 'dense';
+}
+
+export interface LayoutSpec {
+  id: string;
   label: string;
-  /** 方針。仕様書に載せる10行程度の記述と対応する。 */
   summary: string;
-  /** ページ余白（幅に対する比率）。断ち落としの面はこれを無視する。 */
-  margin: number;
-  cover: CoverStyle;
-  /** ムードボードのタイル配置。bleed=true は余白なしの断ち落とし。 */
-  moodboard: { cols: number; rows: number; gap: number; bleed: boolean; captions: boolean };
-  shots: ShotStyle;
-  /** テキスト章の版面。band は先頭に置く画像帯の高さ比（0 なら画像なし）。 */
-  textPage: { columns: 1 | 2; band: number };
+  /** 画像帯の高さの下限・上限（本文量に応じてこの範囲で伸縮する）。 */
+  band: { min: number; max: number };
+  /** ムードボードのタイル配置。最終ページは残数に応じて再配分する。 */
+  moodboard: { cols: number; rows: number; gap: number };
+  /** ショットリストのフィルムストリップ。 */
+  shots: { perPage: number; strip: number };
+  /** dense 面の段組み。テキストだけの章は1段＝1章として詰める。 */
+  dense: { columns: number; gap: number };
   /** 文字サイズ（ページ高さに対する比率）。 */
   type: { title: number; heading: number; body: number; caption: number };
 }
 
 /**
- * 版面案3本（第8章 8-3 の観点で比較する）。
- * 差は「画像がどれだけ面を支配するか」と「テキストがどこに従属するか」に集約している。
+ * 採用版面（第8章 8-5）。
+ * 前半は B（ギャラリー）の画像支配度、後半は C（コンタクトシート）の密度に
+ * A（エディトリアル）の仕様併記を組み合わせる。表紙は C。
+ * 見出し・キャプション・出自表示はどのモードでも落とさない（機能であって装飾ではない）。
  */
-export const LAYOUT_VARIANTS: LayoutVariant[] = [
-  {
-    id: 'editorial',
-    label: 'A：エディトリアル',
-    summary:
-      '表紙は全面ブリード。各章は右2/3が画像、左1/3がテキストの固定グリッドで、視線が常に画像から始まる。ムードボードは3×2の大判タイル、ショットリストは横フィルムストリップ。',
-    margin: 0.045,
-    moodboard: { cols: 3, rows: 2, gap: 0.012, bleed: false, captions: true },
-    cover: 'full-bleed',
-    shots: 'filmstrip',
-    textPage: { columns: 1, band: 0.42 },
-    type: { title: 0.062, heading: 0.032, body: 0.017, caption: 0.013 },
-  },
-  {
-    id: 'gallery',
-    label: 'B：ギャラリー',
-    summary:
-      '画像を最優先し、テキストは最小限のキャプションに落とす。表紙も章扉も全面ブリード。ムードボードは4×3の断ち落としグリッドで余白を持たない。ページ数は増えるが、1面あたりの情報は最も少ない。',
-    margin: 0.03,
-    cover: 'full-bleed',
-    moodboard: { cols: 4, rows: 3, gap: 0, bleed: true, captions: false },
-    shots: 'grid',
-    textPage: { columns: 1, band: 0.62 },
-    type: { title: 0.07, heading: 0.03, body: 0.016, caption: 0.012 },
-  },
-  {
-    id: 'contact',
-    label: 'C：コンタクトシート',
-    summary:
-      '情報密度を優先する。表紙は上2/3が画像、下1/3に案件情報。ムードボードは6×3の小タイルを1ページに収め、ショットリストは絵コンテ＋仕様を並べる。テキストは2段組。ページ数は最も少ない。',
-    margin: 0.04,
-    cover: 'stack',
-    moodboard: { cols: 6, rows: 3, gap: 0.008, bleed: false, captions: true },
-    shots: 'grid',
-    textPage: { columns: 2, band: 0.3 },
-    type: { title: 0.05, heading: 0.026, body: 0.015, caption: 0.011 },
-  },
-];
-
-export function variantById(id: string): LayoutVariant {
-  const found = LAYOUT_VARIANTS.find((variant) => variant.id === id);
-  if (!found) throw new Error(`未知の版面案：${id}`);
-  return found;
-}
+export const ADOPTED_LAYOUT: LayoutSpec = {
+  id: 'adopted',
+  label: '採用版面（前半＝画像支配／後半＝密度）',
+  summary:
+    '表紙は画像＋クリーム地。前半は画像が面を支配し、見出しとキャプション（出自つき）は必ず残す。後半は2段組の密度でまとめ、ショットリストはフィルムストリップにカット別仕様を併記する。',
+  band: { min: 0.4, max: 0.74 },
+  moodboard: { cols: 3, rows: 2, gap: 0.01 },
+  shots: { perPage: 4, strip: 0.4 },
+  dense: { columns: 2, gap: 0.035 },
+  type: { title: 0.055, heading: 0.03, body: 0.016, caption: 0.0125 },
+};
