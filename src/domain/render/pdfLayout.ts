@@ -38,6 +38,15 @@ const MUTED = rgb(0.54, 0.51, 0.47);
 const CHAMPAGNE = rgb(0.7, 0.58, 0.42);
 const PAPER = rgb(0.98, 0.97, 0.95);
 
+/**
+ * 縦にはみ出した分を、どれだけ下側から切るか（0.5=中央基準、1.0=上端を全部残す）。
+ * 人物は顔が上寄りにあるため、切るなら下から切る。
+ */
+const CROP_FROM_BOTTOM = 0.78;
+
+/** タイルが横に伸びすぎると人物写真が帯になる。1枠の縦横比の上限。 */
+const MAX_CELL_ASPECT = 1.5;
+
 const ORIGIN_LABEL: Record<string, string> = {
   upload: '持ち込み',
   external: '外部参照',
@@ -153,12 +162,16 @@ class Sheet {
   /**
    * 枠いっぱいに画像を敷く（はみ出す側は切り落とす）。
    * pdf-lib に切り抜きは無いので、クリップ矩形を積んでから拡大した画像を描く。
+   *
+   * 縦にはみ出すときは**上寄せで残す**。人物写真は顔が画面の上寄りにあり、
+   * 中央基準で切ると頭が落ちる（実写で表紙・タイル・ストリップの全てで再現した）。
    */
   cover(rect: Rect, image: PDFImage): void {
     const box = toPoints(rect, this.format);
     const scale = Math.max(box.width / image.width, box.height / image.height);
     const width = image.width * scale;
     const height = image.height * scale;
+    const overflow = height - box.height;
 
     this.page.pushOperators(
       pushGraphicsState(),
@@ -168,7 +181,7 @@ class Sheet {
     );
     this.page.drawImage(image, {
       x: box.x + (box.width - width) / 2,
-      y: box.y + (box.height - height) / 2,
+      y: box.y - overflow * CROP_FROM_BOTTOM,
       width,
       height,
     });
@@ -589,16 +602,26 @@ export async function renderLayoutPdf(
       // 残数で列と行を組み直す（例：残り2枚なら1行2列の大判にする）。
       const usedCols = Math.min(cols, onPage);
       const usedRows = Math.ceil(onPage / usedCols);
-      const cellW = (area.w - gap * (usedCols - 1)) / usedCols;
       const cellH = (area.h - gap * (usedRows - 1)) / usedRows;
 
       for (let index = 0; index < onPage; index += 1) {
-        const col = index % usedCols;
         const row = Math.floor(index / usedCols);
+        const col = index - row * usedCols;
+        // その行の枚数で幅を決める。半端な行も行幅いっぱいに伸ばし、空セルを残さない。
+        const inRow = Math.min(usedCols, onPage - row * usedCols);
+        // その行の枚数で幅を決める。ただし伸ばしすぎない：横長になりすぎた枠に
+        // 縦位置の人物写真を入れると顔が入らず帯になる（実写で確認）。
+        const stretched = (area.w - gap * (inRow - 1)) / inRow;
+        const cellW = Math.min(
+          stretched,
+          ((cellH - captionRatio) * MAX_CELL_ASPECT * format.heightPt) / format.widthPt,
+        );
+        // 伸ばさなかったぶんは行ごと中央に寄せ、片側だけ空くのを避ける。
+        const offset = (area.w - (cellW * inRow + gap * (inRow - 1))) / 2;
         await place(
           page,
           {
-            x: area.x + col * (cellW + gap),
+            x: area.x + offset + col * (cellW + gap),
             y: area.y + row * (cellH + gap),
             w: cellW,
             h: cellH,
@@ -629,7 +652,9 @@ export async function renderLayoutPdf(
       const top = head + 0.03;
       const onPage = Math.min(perPage, blocks.length - start);
       const gap = 0.006;
-      const cellW = (1 - margin.x * 2 - gap * (onPage - 1)) / onPage;
+      // 枠の幅は常に perPage 分割。カットが少ない面でも枠を広げない
+      // （横に伸ばすと縦位置のカットが帯になり、絵コンテとして読めなくなる）。
+      const cellW = (1 - margin.x * 2 - gap * (perPage - 1)) / perPage;
 
       for (let index = 0; index < onPage; index += 1) {
         await place(

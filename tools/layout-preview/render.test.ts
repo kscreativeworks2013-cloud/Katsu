@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import {
@@ -85,6 +85,44 @@ function gradientPng(
   return `data:image/png;base64,${Buffer.from(png).toString('base64')}`;
 }
 
+/**
+ * 実写素材（あれば）。dist/layout-preview/photos/ に置いたファイルを名前順に使う。
+ * 版面の最終判断は実写でしか下せないため、素材がある場合はそちらを優先する。
+ */
+function photos(): { name: string; dataUri: string; width: number; height: number }[] {
+  const dir = `${OUT_DIR}/photos`;
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.jpg'))
+    .sort()
+    .map((name) => {
+      const bytes = readFileSync(`${dir}/${name}`);
+      // JPEG の SOF マーカーから寸法を読む（解像度警告の判定に実寸が要る）。
+      let width = 0;
+      let height = 0;
+      for (let i = 2; i + 9 < bytes.length;) {
+        if (bytes[i] !== 0xff) {
+          i += 1;
+          continue;
+        }
+        const marker = bytes[i + 1];
+        const length = bytes.readUInt16BE(i + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+          height = bytes.readUInt16BE(i + 5);
+          width = bytes.readUInt16BE(i + 7);
+          break;
+        }
+        i += 2 + length;
+      }
+      return {
+        name,
+        dataUri: `data:image/jpeg;base64,${bytes.toString('base64')}`,
+        width,
+        height,
+      };
+    });
+}
+
 /** ブランドのトーンに寄せた見本。タイルごとに少しずつ振って、並べたときの差が見えるようにする。 */
 const TONES: [number, number, number][][] = [
   [
@@ -118,49 +156,92 @@ function projectWithImages(): { workspace: Workspace; assets: Record<string, Ass
   const project = seedProjects[0];
   const base = seedWorkspaces[project.id];
   const assets: Record<string, Asset> = {};
+  const real = photos();
 
-  const make = (id: string, index: number, width: number, height: number): string => {
-    const [from, to] = TONES[index % TONES.length];
+  const register = (
+    id: string,
+    index: number,
+    size: { width: number; height: number },
+    dataUri: string,
+    origin: Asset['origin'] = 'upload',
+  ): void => {
     assets[id] = {
       id,
-      origin: index % 5 === 0 ? 'ai' : 'upload',
+      origin,
       label: id,
-      source: `${id}.png`,
+      source: `${id}.jpg`,
       runId: null,
-      mimeType: 'image/png',
+      mimeType: 'image/jpeg',
       createdAt: '2026-08-01T00:00:00.000Z',
       variants: [
         {
           kind: 'original',
           key: `${id}:original`,
-          width,
-          height,
-          bytes: 1_000_000,
-          mimeType: 'image/png',
+          width: size.width,
+          height: size.height,
+          bytes: dataUri.length,
+          mimeType: 'image/jpeg',
         },
       ],
     };
-    return gradientPng(width, height, from, to);
+    imageData[id] = dataUri;
+    void index;
   };
 
-  // data URI は解決フェーズが埋めるものなので、ここでは IR に直接差し込む（下の inject）。
-  const data: Record<string, string> = {};
+  if (real.length > 0) {
+    // 実写がある場合：先頭を表紙（＝ムードボード先頭タイル）、続きをムードボード、
+    // 最後の1点をショットリストへ。素材の無いタイルは落とし、判断を素材のある面に絞る。
+    const forMood = real.slice(0, Math.max(1, real.length - 1));
+    const forShots = real.slice(Math.max(1, real.length - 1));
+
+    const moodboard = forMood.map((photo, index) => {
+      const id = `ast-mood-${index}`;
+      register(id, index, photo, photo.dataUri);
+      return {
+        ...base.moodboard[index % base.moodboard.length],
+        id: `mood-${index}`,
+        assetId: id,
+      };
+    });
+    const shots = forShots.map((photo, index) => {
+      const id = `ast-shot-${index}`;
+      register(id, index, photo, photo.dataUri);
+      return { ...base.shots[index % base.shots.length], id: `shot-${index}`, assetId: id };
+    });
+
+    return {
+      workspace: {
+        ...base,
+        proposalBody: generateProposalBody(project, base, seedPortfolio, defaultSettings),
+        moodboard,
+        shots,
+      },
+      assets,
+    };
+  }
+
+  const make = (id: string, index: number, width: number, height: number): string => {
+    const [from, to] = TONES[index % TONES.length];
+    const dataUri = gradientPng(width, height, from, to);
+    register(id, index, { width, height }, dataUri, index % 5 === 0 ? 'ai' : 'upload');
+    return dataUri;
+  };
+
   const workspace: Workspace = {
     ...base,
     proposalBody: generateProposalBody(project, base, seedPortfolio, defaultSettings),
     moodboard: base.moodboard.map((tile, index) => {
       const id = `ast-mood-${index}`;
-      data[id] = make(id, index, 640, 420);
+      make(id, index, 640, 420);
       return { ...tile, assetId: id };
     }),
     shots: base.shots.map((shot, index) => {
       const id = `ast-shot-${index}`;
-      data[id] = make(id, index + 2, 640, 420);
+      make(id, index + 2, 640, 420);
       return { ...shot, assetId: id };
     }),
   };
 
-  Object.assign(imageData, data);
   return { workspace, assets };
 }
 
