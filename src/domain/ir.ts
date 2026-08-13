@@ -216,7 +216,10 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
         severity: 'info',
         sectionId,
         slot: slot.label,
-        message: `${section.ja}の「${slot.label}」は${slot.capacity}点までのため、登録済みの${pool}点のうち${pool - slot.capacity}点は出力に載りません。`,
+        // 「登録済み」とは言わない。ここで数えているのは供給元の**項目数**（実績なら
+        // ポートフォリオの件数）であって、画像の登録状況ではない。同じ面に出る
+        // 「画像未登録」の件数と混ざると、両立しない2文が並ぶ。
+        message: `${section.ja}は${pool}件中${slot.capacity}件のみ掲載されます（「${slot.label}」の枠は${slot.capacity}点）。`,
       });
     }
 
@@ -299,37 +302,37 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
 }
 
 /**
- * 提案の顔になるスロット（第8章 8-7）。ここに同じ画像が並ぶと、
- * 見た目で分かるほど手を抜いた提案になる。割当はテンプレート側でずらしているが、
- * 素材の点数が足りなければ回り込んで重複するため、その事実を出力前に言う。
+ * 同じ1枚が2度出てはいけない枠（第8章 8-7）。
  *
- * **ムードボードは対象に入れない。** ムードボードは素材の一覧であり、表紙や
- * コンセプトに使った1枚がそこにも出るのは重複ではなく参照元の提示である。
- * これを重複として数えると、正常な構成で常時警告が出て、本当の重複が埋もれる。
+ * ・表紙・ブランド分析・撮影コンセプト：提案の顔になる面。同じ画像が並ぶと手抜きに見える。
+ * ・ショットリスト：カットごとに別の絵であることが枠の前提。同じ絵が2カットに出ると、
+ *   併記した仕様（レンズ・構図）と絵が食い違う。**同じ枠の中での重複も数える。**
+ *
+ * **ムードボードだけは対象外。** ムードボードは素材の一覧であり、表紙やコンセプトに
+ * 使った1枚がそこにも出るのは重複ではなく参照元の提示である。これを数えると
+ * 正常な構成で常時警告が出て、本当の重複が埋もれる。
  */
-const PROMINENT_SLOTS = ['cover-key', 'brand-mood', 'concept-key'];
+const PROMINENT_SLOTS = ['cover-key', 'brand-mood', 'concept-key', 'shot-frames'];
 
 function duplicateWarnings(sections: IRSection[]): IRWarning[] {
-  const slotsByAsset = new Map<string, Set<string>>();
-  const captions = new Map<string, string>();
+  const places = new Map<string, string[]>();
 
   for (const section of sections) {
     for (const block of section.blocks) {
       if (block.type !== 'image' || !block.assetId) continue;
       if (!PROMINENT_SLOTS.includes(block.slotId)) continue;
-      const slots = slotsByAsset.get(block.assetId) ?? new Set<string>();
-      slots.add(block.slotLabel);
-      slotsByAsset.set(block.assetId, slots);
-      captions.set(block.assetId, block.caption);
+      // 「どこに出たか」は章名とキャプションで言う（スロットIDは読み手の語彙ではない）。
+      const where = `${section.title}${block.caption ? `／${block.caption}` : ''}`;
+      places.set(block.assetId, [...(places.get(block.assetId) ?? []), where]);
     }
   }
 
-  return [...slotsByAsset.entries()]
-    .filter(([, slots]) => slots.size > 1)
-    .map(([assetId, slots]) => ({
+  return [...places.values()]
+    .filter((where) => where.length > 1)
+    .map((where) => ({
       kind: 'duplicate-image' as const,
       severity: 'info' as const,
-      message: `「${captions.get(assetId) ?? assetId}」が${[...slots].join('・')}に重複して使われています。ムードボードの点数を増やすと自動で分かれます。`,
+      message: `同じ画像が${where.length}か所に使われています：${where.join('、')}。`,
     }));
 }
 

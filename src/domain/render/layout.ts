@@ -86,10 +86,11 @@ export function matPadding(format: PageFormat): { x: number; y: number } {
 export const MAX_MEASURE_CHARS = 45;
 
 /**
- * 1段に置く最小行数。これを満たせない量を2段に割ると、
- * 片方に1行だけ浮いて断片に見える。満たない章は1段で組む。
+ * 1段に置く最小の項目数（段落・箇条の数）。
+ * 判定を行数にすると、1項目が2行に折れただけの段を「足りている」と見なしてしまう。
+ * 読み手が段として認識するのは行ではなく項目の並びなので、項目数で判定する。
  */
-export const MIN_COLUMN_LINES = 2;
+export const MIN_COLUMN_ITEMS = 2;
 
 /**
  * 章ごとの扱い（第8章 8-5）。
@@ -214,11 +215,15 @@ export interface TileGridOptions {
  *
  * **列グリッドと左端は面の中で一定に保つ。** 残数に応じて変えてよいのは面全体の列数だけで、
  * 半端な行だけを広げたり中央に寄せたりしない（上段と下段で幅も左端も違う面になる）。
- * 枚数が列数を下回る面では、その枚数を列数として組み直す（2枚だけの面を作らない）。
+ *
+ * 列数は「段数を増やさずに、行の欠けが最も少なくなる数」を選ぶ。
+ * 6枚→3+3、5枚→3+2、4枚→2+2、2枚→2。4枚を3+1にすると、最終面の台紙が
+ * 右三分の二だけ空く（実測で発生した）。
  */
 export function tileGrid(count: number, area: Rect, options: TileGridOptions): Rect[] {
   const { cols, gap, maxAspect, captionRatio, format } = options;
-  const usedCols = Math.max(1, Math.min(cols, count));
+  const rows = Math.max(1, Math.ceil(Math.max(1, count) / cols));
+  const usedCols = Math.max(1, Math.min(cols, Math.ceil(count / rows)));
   const usedRows = Math.max(1, Math.ceil(count / usedCols));
 
   const cellH = (area.h - gap * (usedRows - 1)) / usedRows;

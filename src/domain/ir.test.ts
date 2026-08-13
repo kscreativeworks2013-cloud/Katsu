@@ -178,7 +178,7 @@ describe('警告', () => {
     );
 
     expect(over?.severity).toBe('info');
-    expect(over?.message).toMatch(/14点のうち2点は出力に載りません/);
+    expect(over?.message).toMatch(/14件中12件のみ掲載されます/);
   });
 
   it('は枠に収まっている枠については知らせない', () => {
@@ -209,7 +209,35 @@ describe('警告', () => {
     const duplicate = ir.warnings.find((warning) => warning.kind === 'duplicate-image');
 
     expect(duplicate?.severity).toBe('info');
-    expect(duplicate?.message).toMatch(/重複して使われています/);
+    expect(duplicate?.message).toMatch(/同じ画像が\d+か所に使われています/);
+  });
+
+  it('はショットリストの中での重複も検知する（カットは別の絵が前提）', () => {
+    // Cut 1 と Cut 5 に同じ画像。仕様（レンズ・構図）は別なので、絵と文が食い違う。
+    const base = workspaceWithBody();
+    const ir = buildTestIR({
+      assets: { 'ast-cut': testAsset('ast-cut') },
+      workspace: {
+        ...base,
+        shots: base.shots.map((shot, index) =>
+          index === 0 || index === 4 ? { ...shot, assetId: 'ast-cut' } : shot,
+        ),
+      },
+    });
+    const duplicate = ir.warnings.find((warning) => warning.kind === 'duplicate-image');
+
+    expect(duplicate?.message).toContain('ショットリスト／Cut 1');
+    expect(duplicate?.message).toContain('ショットリスト／Cut 5');
+  });
+
+  it('はムードボードへの再掲を重複に数えない（素材の一覧だから）', () => {
+    // 表紙のキービジュアルはタイルの1枚目そのもの。これは参照元の提示であって重複ではない。
+    const ir = buildTestIR({
+      assets: { 'ast-1': testAsset('ast-1') },
+      workspace: workspaceWithAsset('ast-1'),
+    });
+
+    expect(ir.warnings.some((warning) => warning.kind === 'duplicate-image')).toBe(false);
   });
 
   it('は素材が足りていれば目立つスロットに同じ画像を置かない', () => {

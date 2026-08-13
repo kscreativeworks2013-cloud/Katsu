@@ -101,6 +101,17 @@ describe('採用版面', () => {
     expect(outside.map((item) => `${item.page}:${item.text}`)).toEqual([]);
   }, 60_000);
 
+  it('は枠が全て未登録の章を画像の面として組まない', async () => {
+    // 競合分析は3枠とも未登録。プレースホルダの帯で面の7割を潰さず、テキストで組む。
+    const text = await extractPdfText(await render());
+
+    // 本文は落とさない。落とすのは中身の無い枠のほうである。
+    expect(text).toContain('競合分析');
+    expect(text).toContain('実績');
+    // 未登録の枠は描かないので、プレースホルダのキャプションはどこにも出ない。
+    expect(text).not.toContain('（画像未登録）');
+  }, 60_000);
+
   it('は info 級の指摘も件数として最終面に残す（提出前チェック）', async () => {
     const text = await extractPdfText(await render());
 

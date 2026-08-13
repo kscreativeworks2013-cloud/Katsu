@@ -28,10 +28,9 @@ import {
   A4_LANDSCAPE,
   ADOPTED_LAYOUT,
   MAX_MEASURE_CHARS,
-  MIN_COLUMN_LINES,
+  MIN_COLUMN_ITEMS,
   matPadding,
   safeMargin,
-  sectionMode,
   tileGrid,
   toPoints,
   type LayoutSpec,
@@ -328,10 +327,7 @@ class Sheet {
     const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
     const colW = (widthRatio - gap) / 2;
     const groups = distribute(entries, (entry) => this.lines(entry, colW), 2);
-    const enough = groups.every(
-      (group) =>
-        group.reduce((sum, entry) => sum + this.lines(entry, colW), 0) >= MIN_COLUMN_LINES,
-    );
+    const enough = groups.every((group) => group.length >= MIN_COLUMN_ITEMS);
     if (enough) return { groups, colW };
 
     return {
@@ -553,8 +549,9 @@ export async function renderLayoutPdf(
     { x: margin.x, y: 0.86 },
     { size: first.size('heading'), color: palette.accent },
   );
+  // 日付は案件データの提案日であって、この PDF を作った日ではない（第8章 8-7）。
   first.line(
-    `${ir.project.proposalDate}／版 ${ir.revision}`,
+    `提案日 ${ir.project.proposalDate}／版 ${ir.revision}`,
     { x: margin.x, y: 0.92 },
     { color: palette.muted },
   );
@@ -572,55 +569,87 @@ export async function renderLayoutPdf(
       const colW = (1 - margin.x * 2 - spec.dense.gap) / spec.dense.columns;
 
       /*
-       * dense 面は段を順に埋める（1段目を満たしてから2段目へ）。
-       * visual 面のように釣り合わせないのは、ここでは段の中身が章だからである。
-       * 量で割ると、見出しが1段目の末尾に残って本文だけが2段目に移る面ができる。
+       * dense 面は**章の単位で段へ配る**（第8章 8-6）。
+       * 1段目を満たしてから2段目という順送りだと、4章あっても左段に3章・右段に1章となり
+       * 右下が大きく空く（実測）。逆に量だけで割ると、見出しが1段目の末尾に残って
+       * 本文だけが2段目に移る。割るのは章の境目に限り、量で釣り合わせる。
        */
-      for (let column = 0; column < spec.dense.columns && denseQueue.length > 0; column += 1) {
+      const chunkOf = (item: { title: string; lines: string[] }): FlowEntry[] => [
+        { text: item.title, size: headingSize, heading: true },
+        ...item.lines.map((text) => ({ text })),
+      ];
+
+      // この面に載せる章を、段の総量まで取る（1章目は入り切らなくても必ず取る）。
+      const taken: { title: string; lines: string[] }[] = [];
+      let filled = 0;
+      while (denseQueue.length > 0) {
+        const next = denseQueue[0];
+        const cost = page.height(chunkOf(next), colW) + (taken.length === 0 ? 0 : 0.035);
+        if (taken.length > 0 && filled + cost > height * spec.dense.columns) break;
+        taken.push(next);
+        denseQueue.shift();
+        filled += cost;
+      }
+
+      // 章が1つだけの面は、本文と同じ段割りの規則に任せる（項目が少なければ1段）。
+      // 章を段へ配る規則をそのまま当てると、1章しか無い面で右段が丸ごと空く。
+      if (taken.length === 1) {
+        const only = taken[0];
+        page.line(only.title, { x: margin.x, y: headTop }, { size: page.size('heading') });
+        const bodyTop = headTop + afterHeading;
+        const rest = page.columns(
+          only.lines,
+          { x: margin.x, y: bodyTop, w: 1 - margin.x * 2, h: 1 - bodyTop - margin.y },
+          spec.dense.gap,
+        );
+        if (rest.length > 0)
+          denseQueue.unshift({ title: `${only.title}（続き）`, lines: rest });
+        continue;
+      }
+
+      const groups = distribute(
+        taken,
+        (item) => page.height(chunkOf(item), colW),
+        spec.dense.columns,
+      );
+
+      let carry: FlowEntry[] = [];
+      for (let column = 0; column < spec.dense.columns; column += 1) {
         const rect: Rect = {
           x: margin.x + column * (colW + spec.dense.gap),
           y: top,
           w: colW,
           h: height,
         };
+        const entries = [
+          ...carry,
+          ...groups[column].flatMap((item, index) =>
+            chunkOf(item).map((entry, position) =>
+              position === 0 && (index > 0 || carry.length > 0)
+                ? { ...entry, gapBefore: 0.035 }
+                : entry,
+            ),
+          ),
+        ];
+        carry = page.flow(entries, rect);
 
-        // 段に入るだけ章を積む。1章目が入り切らなければ「（続き）」で次の段へ送る。
-        let entries: FlowEntry[] = [];
-        let taken = 0;
-        while (denseQueue.length > 0) {
-          const next = denseQueue[0];
-          const candidate: FlowEntry[] = [
-            ...entries,
-            {
-              text: next.title,
-              size: headingSize,
-              heading: true,
-              gapBefore: taken === 0 ? 0 : 0.035,
-            },
-            ...next.lines.map((text) => ({ text })),
-          ];
-          if (taken > 0 && page.overflow(candidate, rect)) break;
-          entries = candidate;
-          denseQueue.shift();
-          taken += 1;
-        }
-
-        // 溢れた分を章ごとに組み直して次の段・次の面へ返す。
-        const rest = page.flow(entries, rect);
-        const back: { title: string; lines: string[] }[] = [];
-        for (const entry of rest) {
-          if (entry.heading) {
-            back.push({ title: entry.text, lines: [] });
-            continue;
+        // 最終段から溢れた分は章ごとに組み直して次の面へ返す。
+        if (column === spec.dense.columns - 1 && carry.length > 0) {
+          const back: { title: string; lines: string[] }[] = [];
+          for (const entry of carry) {
+            if (entry.heading) {
+              back.push({ title: entry.text, lines: [] });
+              continue;
+            }
+            if (back.length === 0) {
+              const drawn = entries.slice(0, entries.length - carry.length);
+              const heading = [...drawn].reverse().find((item) => item.heading)?.text ?? '';
+              back.push({ title: `${heading}（続き）`, lines: [] });
+            }
+            back[back.length - 1].lines.push(entry.text);
           }
-          if (back.length === 0) {
-            const drawn = entries.slice(0, entries.length - rest.length);
-            const heading = [...drawn].reverse().find((item) => item.heading)?.text ?? '';
-            back.push({ title: `${heading}（続き）`, lines: [] });
-          }
-          back[back.length - 1].lines.push(entry.text);
+          denseQueue.unshift(...back);
         }
-        denseQueue.unshift(...back);
       }
     }
   };
@@ -630,21 +659,27 @@ export async function renderLayoutPdf(
 
     const images = imageBlocks(section);
     const lines = textLines(section);
-    const mode = sectionMode(section.id);
+    /*
+     * 枠が全て未登録の章は、画像の面として組まない（第8章 8-7）。
+     * プレースホルダだけの帯が面の7割を占め、下が白く空く面になる。
+     * 未登録の枠を出さない扱いはロゴ（供給元が空なら枠ごと出さない）と同じで、
+     * 「枠はあるが中身が無い」ときだけ版面が変わるのは不統一だった。
+     */
+    const shown = images.filter((block) => block.assetId);
 
-    if (section.id === 'moodboard') {
+    if (shown.length > 0 && section.id === 'moodboard') {
       flushDense();
-      await renderTiles(section.title, images);
+      await renderTiles(section.title, shown);
       continue;
     }
-    if (section.id === 'shots') {
+    if (shown.length > 0 && section.id === 'shots') {
       flushDense();
-      await renderShots(section.title, images, lines);
+      await renderShots(section.title, shown, lines);
       continue;
     }
-    if (mode === 'visual' || images.length > 0) {
+    if (shown.length > 0) {
       flushDense();
-      await renderVisual(section.title, images, lines);
+      await renderVisual(section.title, shown, lines);
       continue;
     }
     denseQueue.push({ title: section.title, lines });

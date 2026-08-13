@@ -222,7 +222,9 @@ export function resolveSlot(
       return take(workspace.shots, slot).map((shot) =>
         withFocus({
           key: `${slot.id}-${shot.id}`,
-          caption: `Cut ${shot.no}｜${shot.subject}`,
+          // キャプションは識別子だけにする。被写体・レンズ・構図は本文が持っており、
+          // 枠の下に同じ文を並べると面が二重帳簿になる（第8章 8-7）。
+          caption: `Cut ${shot.no}`,
           asset: resolveAsset(assets, shot.assetId),
         }),
       );
@@ -230,7 +232,7 @@ export function resolveSlot(
       return take(workspace.competitors, slot).map((competitor) =>
         withFocus({
           key: `${slot.id}-${competitor.id}`,
-          caption: `${competitor.name}｜${competitor.visual}`,
+          caption: competitor.name,
           asset: resolveAsset(assets, competitor.assetId),
         }),
       );

@@ -8,7 +8,7 @@ import {
   seedWorkspaces,
 } from '../../src/data/fixtures';
 import { generateProposalBody } from '../../src/data/proposalBody';
-import type { Asset, Workspace } from '../../src/data/types';
+import type { Asset, PortfolioWork, Workspace } from '../../src/data/types';
 import { buildProposalIR, type ProposalIR } from '../../src/domain/ir';
 import { ADOPTED_LAYOUT } from '../../src/domain/render/layout';
 import { renderLayoutPdf } from '../../src/domain/render/pdfLayout';
@@ -153,12 +153,15 @@ const TONES: [number, number, number][][] = [
 
 /**
  * 全スロットにアセットを結びつけた案件データ。版面の比較には画像が要る。
- * fill を渡すと、素材を複製してムードボード・ショットリストをその枚数まで埋める
- * （再配分ロジックを 3+3 と 3+2 の両方で確かめるため）。
+ *
+ * grid を渡すと、素材を**複製または切り詰めて**ちょうどその枚数に揃える。
+ * 素材の点数によらず 3+3／3+2 の再配分を確かめるための状態であって、
+ * 「登録済みの全素材を出した状態」ではない（点数は実素材と一致しない）。
  */
-function projectWithImages(fill?: { tiles: number; cuts: number }): {
+function projectWithImages(grid?: { tiles: number; cuts: number }): {
   workspace: Workspace;
   assets: Record<string, Asset>;
+  portfolio: PortfolioWork[];
 } {
   const project = seedProjects[0];
   const base = seedWorkspaces[project.id];
@@ -196,29 +199,57 @@ function projectWithImages(fill?: { tiles: number; cuts: number }): {
   };
 
   if (real.length > 0) {
-    // 実写がある場合：ファイル名に shot を含むものはショットリスト、それ以外は
-    // ムードボード（先頭は表紙のキービジュアルにもなる）。素材の無いタイルは落とす。
+    // 実写がある場合：ファイル名で振り分ける。shot はショットリスト、work は実績、
+    // それ以外はムードボード（先頭は表紙のキービジュアルにもなる）。
     const forShots = real.filter((photo) => photo.name.includes('shot'));
-    const forMood = real.filter((photo) => !photo.name.includes('shot'));
-    /** 枚数を指定数まで複製で埋める（既存アセットの複製で再配分を確かめる）。 */
+    const forWorks = real.filter((photo) => photo.name.includes('work'));
+    const forMood = real.filter(
+      (photo) => !photo.name.includes('shot') && !photo.name.includes('work'),
+    );
+    /** 指定枚数ちょうどに揃える（足りなければ複製、多ければ切り詰め）。 */
     const pad = <T>(list: T[], count?: number): T[] =>
       count === undefined || list.length === 0
         ? list
         : Array.from({ length: count }, (_, index) => list[index % list.length]);
 
-    const moodboard = pad(forMood, fill?.tiles).map((photo, index) => {
-      const id = `ast-mood-${index}`;
+    /*
+     * 説明文は素材に紐づける。項目数を超えた分でシードの説明を巻き戻すと、
+     * 別の画像に同じキャプションが付く（実際に2面目で再現した）。
+     * 超えた分は素材側の名前を使い、循環させない。
+     */
+    // アセットIDは素材の名前から作る。連番にすると、同じ写真を2か所に置いても
+    // 別アセットとして登録され、重複検知が働かない。
+    const idOf = (photo: { name: string }): string => `ast-${photo.name.replace(/\.jpg$/, '')}`;
+
+    const moodboard = pad(forMood, grid?.tiles).map((photo, index) => {
+      const id = idOf(photo);
       register(id, index, photo, photo.dataUri);
+      const seed = base.moodboard[index];
       return {
-        ...base.moodboard[index % base.moodboard.length],
+        ...(seed ?? base.moodboard[0]),
         id: `mood-${index}`,
+        caption: seed ? seed.caption : photo.name.replace(/\.jpg$/, ''),
         assetId: id,
       };
     });
-    const shots = pad(forShots, fill?.cuts).map((photo, index) => {
-      const id = `ast-shot-${index}`;
+    const shots = pad(forShots, grid?.cuts).map((photo, index) => {
+      const id = idOf(photo);
       register(id, index, photo, photo.dataUri);
-      return { ...base.shots[index % base.shots.length], id: `shot-${index}`, assetId: id };
+      const seed = base.shots[index] ?? base.shots[base.shots.length - 1];
+      return {
+        ...seed,
+        id: `shot-${index}`,
+        no: index + 1,
+        subject: base.shots[index] ? seed.subject : photo.name.replace(/\.jpg$/, ''),
+        assetId: id,
+      };
+    });
+    const portfolio = seedPortfolio.map((work, index) => {
+      const photo = forWorks[index];
+      if (!photo) return work;
+      const id = idOf(photo);
+      register(id, index, photo, photo.dataUri);
+      return { ...work, assetId: id };
     });
 
     return {
@@ -227,11 +258,13 @@ function projectWithImages(fill?: { tiles: number; cuts: number }): {
         proposalBody: generateProposalBody(project, base, seedPortfolio, defaultSettings),
         moodboard,
         shots,
+        // 競合の3枠は未登録のまま残す（未登録時の版面を確かめるため）。
         // 表紙は 3:2 の横位置を帯へ流すため、既定の上寄せでも帽子の天面が切れる。
         // スロット単位の切り出し指定（第8章 8-7）で上端を残す。
         crops: { 'cover-key-mood-0': { x: 0.5, y: 0 } },
       },
       assets,
+      portfolio,
     };
   }
 
@@ -257,7 +290,7 @@ function projectWithImages(fill?: { tiles: number; cuts: number }): {
     }),
   };
 
-  return { workspace, assets };
+  return { workspace, assets, portfolio: seedPortfolio };
 }
 
 const imageData: Record<string, string> = {};
@@ -277,9 +310,9 @@ function inject(ir: ProposalIR): ProposalIR {
   };
 }
 
-async function write(name: string, fill?: { tiles: number; cuts: number }): Promise<void> {
+async function write(name: string, grid?: { tiles: number; cuts: number }): Promise<void> {
   const project = seedProjects[0];
-  const { workspace, assets } = projectWithImages(fill);
+  const { workspace, assets, portfolio } = projectWithImages(grid);
   const fontBytes = loadTestFont();
 
   const ir = inject(
@@ -287,7 +320,7 @@ async function write(name: string, fill?: { tiles: number; cuts: number }): Prom
       project,
       workspace,
       provenance: {},
-      portfolio: seedPortfolio,
+      portfolio,
       assets,
       lang: 'ja',
       builtAt: new Date('2026-08-13T00:00:00.000Z'),
@@ -303,13 +336,18 @@ async function write(name: string, fill?: { tiles: number; cuts: number }): Prom
 }
 
 describe('版面案の書き出し', () => {
-  it('は採用版面の PDF を書き出す', async () => {
+  /*
+   * 出力は2本で、入力の状態が違う。
+   * ・adopted.pdf   ：dist/layout-preview/photos に置いた**実素材そのまま**。
+   * ・grid-6x6.pdf  ：素材を複製・切り詰めてタイル6点／カット6本ちょうどに揃えた状態。
+   *                   3+3 と 4+2 の再配分を、素材の点数に左右されずに見るための面。
+   * 点数が違うのはこの定義によるもので、同じ状態から2本出しているわけではない。
+   */
+  it('は実素材そのままの PDF を書き出す', async () => {
     await write(ADOPTED_LAYOUT.id);
   });
 
-  // 素材の複製で満量（タイル6枚＝3+3、カット6本＝4+2ページ）にした状態。
-  // 半端な行の再配分が左端と列グリッドを保つかを、実寸で確かめるための書き出し。
-  it('は素材を複製した満量の PDF も書き出す', async () => {
-    await write(`${ADOPTED_LAYOUT.id}-full`, { tiles: 6, cuts: 6 });
+  it('は再配分確認用（6点／6カット）の PDF を書き出す', async () => {
+    await write('grid-6x6', { tiles: 6, cuts: 6 });
   });
 });
