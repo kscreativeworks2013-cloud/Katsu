@@ -131,7 +131,20 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       },
     ],
   },
-  { id: 'lighting', ja: 'ライティングプラン', en: 'Lighting Plan', imageSlots: [] },
+  {
+    id: 'lighting',
+    ja: 'ライティングプラン',
+    en: 'Lighting Plan',
+    /*
+     * ライティングは図（光源・レフ・フラッグの配置）で示すのが本筋だが、
+     * 位置を持つデータが無い（生成側が持っているのは文章だけ）。図はデータモデルから
+     * 起こす必要があるので、まずは**参考カット**の枠を置く。カットは既にあり、
+     * 「この光をこう作る」を絵で示せる（第8章 8-10）。
+     */
+    imageSlots: [
+      { id: 'lighting-refs', label: '参考カット', source: 'shots', capacity: 2, offset: 2 },
+    ],
+  },
   {
     id: 'works',
     ja: '実績',
@@ -170,7 +183,7 @@ export function slotPoolSize(
 ): number {
   switch (slot.source) {
     case 'logo':
-      return 0;
+      return workspace.logoAssetId ? 1 : 0;
     case 'moodboard':
       return workspace.moodboard.length;
     case 'shots':
@@ -219,9 +232,11 @@ export function resolveSlot(
   const picks = workspace.picks?.[slot.id];
 
   switch (slot.source) {
-    case 'logo':
-      // ロゴアセットの登録UIは実装前のため、常に空（プレースホルダ表示）になる。
-      return [];
+    case 'logo': {
+      // ロゴは1点だけ。未設定なら空（枠ごと出さない）。
+      const logo = resolveAsset(assets, workspace.logoAssetId);
+      return logo ? [withFocus({ key: `${slot.id}-logo`, caption: '', asset: logo })] : [];
+    }
     case 'moodboard':
       return take(workspace.moodboard, slot, picks).map((tile) =>
         withFocus({

@@ -296,6 +296,8 @@ export interface Workspace {
    * 選択は生成物ではなく利用者の判断なので、provenance では扱わず再生成でも保護しない。
    */
   picks?: Record<string, string[]>;
+  /** ブランドロゴのアセット（第8章 8-10）。表紙に置く。未設定なら枠ごと出さない。 */
+  logoAssetId?: string | null;
   exports: ExportRecord[];
 }
 

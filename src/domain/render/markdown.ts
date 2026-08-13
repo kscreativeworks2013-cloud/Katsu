@@ -67,6 +67,17 @@ export const markdownRenderer: Renderer = {
       for (const block of section.blocks) {
         if (block.type === 'paragraph') {
           lines.push(block.text, '');
+        } else if (block.type === 'map') {
+          // 図はテキストでは座標の表として残す（Markdown に絵は置けない）。
+          lines.push(
+            `| ポジション | ${block.axes.x[0]}⇄${block.axes.x[1]} | ${block.axes.y[0]}⇄${block.axes.y[1]} |`,
+            '| --- | --- | --- |',
+            ...block.points.map(
+              (point) =>
+                `| ${point.label}${point.self ? '（自社）' : ''} | ${point.x.toFixed(2)} | ${point.y.toFixed(2)} |`,
+            ),
+            '',
+          );
         } else if (block.type === 'list') {
           for (const item of block.items) lines.push(`- ${item}`);
           lines.push('');

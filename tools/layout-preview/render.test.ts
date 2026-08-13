@@ -123,6 +123,42 @@ function photos(): { name: string; dataUri: string; width: number; height: numbe
     });
 }
 
+/**
+ * 仮のブランドロゴ（第8章 8-10）。
+ * 実素材が無くても、表紙でタイトル・副題と衝突しないかは確かめられる。
+ * 紙色の地に濃い横棒と四角を置いただけの記号で、字は含めない（字形は別問題）。
+ */
+function logoPng(): string {
+  const width = 480;
+  const height = 160;
+  const raw = new Uint8Array(height * (width * 3 + 1));
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (width * 3 + 1);
+    raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const bar = y > 118 && y < 130 && x > 8 && x < 420;
+      const block = x > 8 && x < 96 && y > 24 && y < 104;
+      const ring = Math.abs(Math.hypot(x - 190, y - 64) - 44) < 7;
+      const ink = bar || block || ring;
+      raw.set(ink ? [24, 22, 20] : [246, 240, 233], row + 1 + x * 3);
+    }
+  }
+
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+
+  const png = new Uint8Array([
+    ...[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    ...chunk('IHDR', ihdr),
+    ...chunk('IDAT', new Uint8Array(deflateSync(Buffer.from(raw)))),
+    ...chunk('IEND', new Uint8Array()),
+  ]);
+  return `data:image/png;base64,${Buffer.from(png).toString('base64')}`;
+}
+
 /** ブランドのトーンに寄せた見本。タイルごとに少しずつ振って、並べたときの差が見えるようにする。 */
 const TONES: [number, number, number][][] = [
   [
@@ -252,12 +288,35 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
       return { ...work, assetId: id };
     });
 
+    // ロゴは実素材が無いので仮の記号を登録する（表紙での衝突確認用）。
+    assets['ast-logo'] = {
+      id: 'ast-logo',
+      origin: 'upload',
+      label: 'ブランドロゴ（仮）',
+      source: 'logo.png',
+      runId: null,
+      mimeType: 'image/png',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      variants: [
+        {
+          kind: 'original',
+          key: 'ast-logo:original',
+          width: 480,
+          height: 160,
+          bytes: 1000,
+          mimeType: 'image/png',
+        },
+      ],
+    };
+    imageData['ast-logo'] = logoPng();
+
     return {
       workspace: {
         ...base,
         proposalBody: generateProposalBody(project, base, seedPortfolio, defaultSettings),
         moodboard,
         shots,
+        logoAssetId: 'ast-logo',
         // 競合の3枠は未登録のまま残す（未登録時の版面を確かめるため）。
         // 表紙は 3:2 の横位置を帯へ流すため、既定の上寄せでも帽子の天面が切れる。
         // スロット単位の切り出し指定（第8章 8-7）で上端を残す。

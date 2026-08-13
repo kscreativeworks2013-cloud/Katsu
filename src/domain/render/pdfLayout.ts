@@ -29,6 +29,7 @@ import {
   ADOPTED_LAYOUT,
   MAX_MEASURE_CHARS,
   MIN_COLUMN_ITEMS,
+  MIN_MEASURE_CHARS,
   bandCells,
   cellSize,
   gridCells,
@@ -37,6 +38,7 @@ import {
   safeMargin,
   shotArea,
   shotOptions,
+  slotWidthRatio,
   tileArea,
   tileOptions,
   toPoints,
@@ -65,6 +67,7 @@ const ORIGIN_LABEL: Record<string, string> = {
 };
 
 type ImageBlock = Extract<IRBlock, { type: 'image' }>;
+type MapBlock = Extract<IRBlock, { type: 'map' }>;
 type Color = ReturnType<typeof rgb>;
 
 /** 版面色。IR の theme（ブランドのパレットからの導出）を pdf-lib の色型に写したもの。 */
@@ -143,6 +146,10 @@ function textLines(section: IRSection): string[] {
 
 function imageBlocks(section: IRSection): ImageBlock[] {
   return section.blocks.filter((block): block is ImageBlock => block.type === 'image');
+}
+
+function mapBlock(section: IRSection): MapBlock | undefined {
+  return section.blocks.find((block): block is MapBlock => block.type === 'map');
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -254,6 +261,41 @@ class Sheet {
     this.page.pushOperators(popGraphicsState());
   }
 
+  /** 直線を1本引く（図の軸）。 */
+  rule(from: { x: number; y: number }, to: { x: number; y: number }, color: Color): void {
+    this.page.drawLine({
+      start: { x: from.x * this.format.widthPt, y: (1 - from.y) * this.format.heightPt },
+      end: { x: to.x * this.format.widthPt, y: (1 - to.y) * this.format.heightPt },
+      thickness: 0.6,
+      color,
+    });
+  }
+
+  /** 点を1つ打つ（図の位置）。 */
+  dot(at: { x: number; y: number }, radius: number, color: Color): void {
+    this.page.drawCircle({
+      x: at.x * this.format.widthPt,
+      y: (1 - at.y) * this.format.heightPt,
+      size: radius * this.format.widthPt,
+      color,
+    });
+  }
+
+  /**
+   * 枠の中に画像を収める（切らない）。ロゴのように形が意味を持つ画像に使う。
+   * 余った側は空ける。左下を基準に置き、版面の基準線から浮かせない。
+   */
+  contain(rect: Rect, image: PDFImage): void {
+    const box = toPoints(rect, this.format);
+    const scale = Math.min(box.width / image.width, box.height / image.height);
+    this.page.drawImage(image, {
+      x: box.x,
+      y: box.y,
+      width: image.width * scale,
+      height: image.height * scale,
+    });
+  }
+
   /** 画像が無いスロットの受け皿。面付けを崩さないよう、同じ枠を淡色で置く。 */
   placeholder(rect: Rect): void {
     this.fill(rect, this.palette.mat);
@@ -331,7 +373,9 @@ class Sheet {
     const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
     const colW = (widthRatio - gap) / 2;
     const groups = distribute(entries, (entry) => this.lines(entry, colW), 2);
-    const enough = groups.every((group) => group.length >= MIN_COLUMN_ITEMS);
+    const measure = (colW * this.format.widthPt) / this.size('body');
+    const enough =
+      measure >= MIN_MEASURE_CHARS && groups.every((group) => group.length >= MIN_COLUMN_ITEMS);
     if (enough) return { groups, colW };
 
     return {
@@ -542,6 +586,17 @@ export async function renderLayoutPdf(
   const art: Rect = { x: 0, y: 0, w: 1, h: 0.66 };
   if (keyImage) first.cover(art, keyImage, keyVisual?.focus);
   else first.placeholder(art);
+
+  // ロゴは画像帯とタイトルの間に置く。切らずに収め、タイトルの字面に触れない高さに収める。
+  const logoBlock = coverImages.find((block) => block.slotId === 'cover-logo');
+  const logoImage = logoBlock ? await imageFor(logoBlock) : undefined;
+  if (logoImage) {
+    first.contain(
+      { x: margin.x, y: 0.672, w: slotWidthRatio('cover-logo'), h: 0.045 },
+      logoImage,
+    );
+  }
+
   first.line(
     ir.project.name,
     { x: margin.x, y: 0.79 },
@@ -669,7 +724,14 @@ export async function renderLayoutPdf(
      * 「枠はあるが中身が無い」ときだけ版面が変わるのは不統一だった。
      */
     const shown = images.filter((block) => block.assetId);
+    const map = mapBlock(section);
 
+    // 位置関係の図を持つ章は、図を主にした面で組む（競合分析）。
+    if (map) {
+      flushDense();
+      renderMap(section.title, map, lines);
+      continue;
+    }
     if (shown.length > 0 && section.id === 'moodboard') {
       flushDense();
       await renderTiles(section.title, shown);
@@ -769,6 +831,62 @@ export async function renderLayoutPdf(
       spec.dense.gap,
     );
     // 溢れた分は dense の流れへ送る（画像面を本文で押し広げない）。
+    if (rest.length > 0) denseQueue.push({ title: `${title}（続き）`, lines: rest });
+  }
+
+  /**
+   * ポジショニングマップの面（第8章 8-10）。
+   * 競合分析は「どこが空いているか」を見る章なので、位置関係を図で示し、
+   * 本文はその補助として右に置く。テキストだけの面にしない。
+   */
+  function renderMap(title: string, map: MapBlock, lines: string[]): void {
+    const page = sheet();
+    page.line(title, { x: margin.x, y: headTop }, { size: page.size('heading') });
+
+    const top = headTop + afterHeading;
+    const bottom = 1 - margin.y;
+    // 図は左 54%。右は本文（測度は1段の上限に収まる）。
+    const plot: Rect = {
+      x: margin.x + 0.03,
+      y: top + 0.04,
+      w: 0.54 - margin.x - 0.06,
+      h: bottom - top - 0.1,
+    };
+
+    // 軸（中央の十字）と、四隅の意味づけ。
+    const midX = plot.x + plot.w / 2;
+    const midY = plot.y + plot.h / 2;
+    page.rule({ x: plot.x, y: midY }, { x: plot.x + plot.w, y: midY }, palette.matEdge);
+    page.rule({ x: midX, y: plot.y }, { x: midX, y: plot.y + plot.h }, palette.matEdge);
+    // 軸の名前は軸の端に置く（四隅に集めると隣の軸のラベルと重なる）。
+    page.line(map.axes.x[0], { x: plot.x, y: midY - 0.012 }, { color: palette.muted });
+    page.line(
+      map.axes.x[1],
+      { x: plot.x + plot.w - 0.05, y: midY - 0.012 },
+      { color: palette.muted },
+    );
+    page.line(map.axes.y[0], { x: midX + 0.008, y: plot.y - 0.008 }, { color: palette.muted });
+    page.line(
+      map.axes.y[1],
+      { x: midX + 0.008, y: plot.y + plot.h + 0.022 },
+      { color: palette.muted },
+    );
+
+    for (const point of map.points) {
+      const at = { x: plot.x + point.x * plot.w, y: plot.y + point.y * plot.h };
+      page.dot(at, point.self ? 0.006 : 0.004, point.self ? palette.accent : palette.ink);
+      page.line(
+        point.self ? `${point.label}（提案位置）` : point.label,
+        { x: at.x + 0.01, y: at.y + 0.004 },
+        { size: page.size('caption'), color: point.self ? palette.accent : palette.ink },
+      );
+    }
+
+    const rest = page.columns(
+      lines,
+      { x: 0.58, y: top, w: 1 - 0.58 - margin.x, h: bottom - top },
+      spec.dense.gap,
+    );
     if (rest.length > 0) denseQueue.push({ title: `${title}（続き）`, lines: rest });
   }
 

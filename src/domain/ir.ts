@@ -38,6 +38,15 @@ export type IRBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] }
   | {
+      /**
+       * 位置関係の図（第8章 8-10）。競合分析のポジショニングマップ。
+       * 座標は 0..1 で、意味づけ（軸の名前）は IR が持つ。レンダラは描き方だけを決める。
+       */
+      type: 'map';
+      axes: { x: [string, string]; y: [string, string] };
+      points: { label: string; x: number; y: number; self?: boolean }[];
+    }
+  | {
       type: 'image';
       caption: string;
       slotId: string;
@@ -216,6 +225,38 @@ function toBlocks(lines: string[]): IRBlock[] {
   return blocks;
 }
 
+/**
+ * 競合のポジショニングマップ（第8章 8-10）。
+ *
+ * 自社の位置はデータに無いので、**競合から最も遠い点**を提案位置として置く。
+ * 「空いている場所」を示すのが差別化の議論の出発点であり、根拠のある置き方はこれしかない。
+ */
+function positioningMap(input: BuildIRInput): IRBlock | undefined {
+  const competitors = input.workspace.competitors;
+  if (competitors.length === 0) return undefined;
+
+  let best = { x: 0.5, y: 0.5, distance: -1 };
+  for (let ix = 1; ix <= 9; ix += 1) {
+    for (let iy = 1; iy <= 9; iy += 1) {
+      const x = ix / 10;
+      const y = iy / 10;
+      const distance = Math.min(
+        ...competitors.map((item) => Math.hypot(item.x - x, item.y - y)),
+      );
+      if (distance > best.distance) best = { x, y, distance };
+    }
+  }
+
+  return {
+    type: 'map',
+    axes: { x: ['クラシック', 'モダン'], y: ['ミニマル', 'ドラマティック'] },
+    points: [
+      ...competitors.map((item) => ({ label: item.name, x: item.x, y: item.y })),
+      { label: input.project.brand, x: best.x, y: best.y, self: true },
+    ],
+  };
+}
+
 function imageBlocks(
   sectionId: string,
   input: BuildIRInput,
@@ -248,7 +289,11 @@ function imageBlocks(
       pool: slotPoolSize(slot, input.workspace, input.portfolio),
       shown: images.length,
       exhaustive: slot.exhaustive === true,
-      unnamed: images.filter((image) => image.caption.trim() === '').length,
+      // ロゴはキャプションを描かない枠なので、説明文の有無を数えない。
+      unnamed:
+        slot.source === 'logo'
+          ? 0
+          : images.filter((image) => image.caption.trim() === '').length,
     });
 
     for (const image of images) {
@@ -432,7 +477,8 @@ export function buildProposalIR(input: BuildIRInput): ProposalIR {
     const body = input.workspace.proposalBody?.[template.id];
     const images = imageBlocks(template.id, input, warnings, slots);
     const lines = body ? (input.lang === 'ja' ? body.ja : body.en) : [];
-    const blocks = [...toBlocks(lines), ...images];
+    const map = template.id === 'competitors' ? positioningMap(input) : undefined;
+    const blocks = [...toBlocks(lines), ...(map ? [map] : []), ...images];
 
     if (!body) {
       warnings.push({

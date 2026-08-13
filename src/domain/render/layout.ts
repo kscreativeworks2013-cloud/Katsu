@@ -86,6 +86,12 @@ export function matPadding(format: PageFormat): { x: number; y: number } {
 export const MAX_MEASURE_CHARS = 45;
 
 /**
+ * 本文の最小測度（全角の字数）。これを割ると1行に入る語が少なすぎて読めない。
+ * 段組みは面の幅ではなく測度で決める（狭い面で2段に割らないための下限）。
+ */
+export const MIN_MEASURE_CHARS = 24;
+
+/**
  * 1段に置く最小の項目数（段落・箇条の数）。
  * 判定を行数にすると、1項目が2行に折れただけの段を「足りている」と見なしてしまう。
  * 読み手が段として認識するのは行ではなく項目の並びなので、項目数で判定する。
