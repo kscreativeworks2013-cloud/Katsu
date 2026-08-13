@@ -160,7 +160,9 @@ export const pdfRenderer: Renderer = {
     const doc = await PDFDocument.create();
     doc.registerFontkit(fontkit);
     // 使用文字だけを埋め込む（第6章 6-6）。
-    const font = await doc.embedFont(options.fontBytes, { subset: true });
+    // フォント実体は複製してから渡す。同じバッファを複数の文書で使い回すと、
+    // サブセット化の状態が持ち越されて2本目以降の字形が欠ける（日本語版と英語版で再現する）。
+    const font = await doc.embedFont(Uint8Array.from(options.fontBytes), { subset: true });
 
     doc.setTitle(ir.project.name);
     doc.setSubject(`${ir.project.brand} / ${ir.project.client}`);

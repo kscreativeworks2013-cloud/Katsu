@@ -184,7 +184,7 @@ describe('外部URL画像の取り込み', () => {
 
 describe('画像の解像度と実体（第7章 7-2／7-6）', () => {
   it('は配置幅に対して画素が足りない画像を、必要px付きで警告する', () => {
-    // 表紙キービジュアル（210mm）には 1654px 必要。1024px では届かない。
+    // 表紙キービジュアル（A4横で 297mm 全面）には 2339px 必要。1024px では届かない。
     const ir = buildTestIR({
       assets: { 'ast-small': testAsset('ast-small', { width: 1024, height: 768 }) },
       workspace: workspaceWithAsset('ast-small'),
@@ -192,8 +192,8 @@ describe('画像の解像度と実体（第7章 7-2／7-6）', () => {
 
     const warning = ir.warnings.find((item) => item.kind === 'low-resolution');
     expect(warning?.severity).toBe('warn');
-    expect(warning?.message).toMatch(/124ppi/);
-    expect(warning?.message).toMatch(/1654px 必要/);
+    expect(warning?.message).toMatch(/88ppi/);
+    expect(warning?.message).toMatch(/2339px 必要/);
   });
 
   it('は原寸のない画像を「出力では欠ける」と警告する', () => {

@@ -17,8 +17,9 @@ export interface ImageSlot {
   /** スロットに入る最大枚数。shots のように可変のものは Infinity。 */
   capacity: number;
   /**
-   * A4 縦の版面での想定配置幅（mm）。必要ピクセル数の判定に使う（第7章 7-2）。
-   * 版面設計フェーズでレイアウトを詰めるときは、この値も一緒に更新する。
+   * A4横（297×210mm）の版面での想定配置幅（mm）。必要ピクセル数の判定に使う（第7章 7-2）。
+   * 版面案によって配置は変わるため、**3案のうち最も大きい配置**を入れている
+   * （判定を甘くしないため）。採用案が決まったら版面定義から導出する（第8章 8-4）。
    */
   printWidthMm: number;
 }
@@ -48,7 +49,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: 'キービジュアル',
         source: 'moodboard',
         capacity: 1,
-        printWidthMm: 210,
+        printWidthMm: 297,
       },
     ],
   },
@@ -62,7 +63,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: 'ブランドイメージ',
         source: 'moodboard',
         capacity: 2,
-        printWidthMm: 100,
+        printWidthMm: 148,
       },
     ],
   },
@@ -77,7 +78,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: 'キービジュアル',
         source: 'moodboard',
         capacity: 1,
-        printWidthMm: 150,
+        printWidthMm: 297,
       },
     ],
   },
@@ -86,7 +87,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     ja: 'ムードボード',
     en: 'Mood Board',
     imageSlots: [
-      { id: 'mood-tiles', label: 'タイル', source: 'moodboard', capacity: 8, printWidthMm: 62 },
+      { id: 'mood-tiles', label: 'タイル', source: 'moodboard', capacity: 8, printWidthMm: 90 },
     ],
   },
   {
@@ -99,7 +100,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: '絵コンテ',
         source: 'shots',
         capacity: Number.POSITIVE_INFINITY,
-        printWidthMm: 62,
+        printWidthMm: 75,
       },
     ],
   },
@@ -114,7 +115,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: '選定作品',
         source: 'portfolio',
         capacity: 3,
-        printWidthMm: 62,
+        printWidthMm: 148,
       },
     ],
   },
