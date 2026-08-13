@@ -163,6 +163,42 @@ describe('警告', () => {
     );
   });
 
+  it('は枠に載り切らない素材の点数を知らせる', () => {
+    // 登録したのに出力に出ない、を黙って起こさない（第8章 8-7）。
+    const base = workspaceWithBody();
+    const ir = buildTestIR({
+      workspace: {
+        ...base,
+        // タイル枠は12。14点あれば2点は載らない。
+        moodboard: [...base.moodboard, ...base.moodboard].slice(0, 14),
+      },
+    });
+    const over = ir.warnings.find(
+      (warning) => warning.kind === 'over-capacity' && warning.slot === 'タイル',
+    );
+
+    expect(over?.severity).toBe('info');
+    expect(over?.message).toMatch(/14点のうち2点は出力に載りません/);
+  });
+
+  it('は枠に収まっている枠については知らせない', () => {
+    // シードのタイルは8点で枠は12。全点載るので黙る。
+    const warnings = buildTestIR().warnings.filter(
+      (warning) => warning.kind === 'over-capacity',
+    );
+
+    expect(warnings.some((warning) => warning.slot === 'タイル')).toBe(false);
+  });
+
+  it('は供給元から選ぶだけの枠（表紙）では超過を数えない', () => {
+    // 表紙のキービジュアルはムードボード8点から1点を選ぶ枠。7点余るのが正常。
+    const warnings = buildTestIR().warnings.filter(
+      (warning) => warning.kind === 'over-capacity',
+    );
+
+    expect(warnings.some((warning) => warning.slot === 'キービジュアル')).toBe(false);
+  });
+
   it('は目立つスロットの重複を検知する（素材が足りず回り込んだとき）', () => {
     // タイルが1枚しか無ければ、表紙・ブランド分析・撮影コンセプトは同じ1枚に回り込む。
     const base = workspaceWithAsset('ast-1');

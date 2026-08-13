@@ -69,6 +69,29 @@ export function safeMargin(format: PageFormat): { x: number; y: number } {
 }
 
 /**
+ * 台紙（ムードボードのタイル面）の内側の余白（mm）。
+ * 台紙そのものは安全マージンに揃える。半端な位置（版面とも断ち落としとも違う）に置くと、
+ * 面の中に3本目の基準線ができる。タイルはこの余白ぶん内側に入る。
+ */
+export const MAT_PADDING_MM = 6;
+
+export function matPadding(format: PageFormat): { x: number; y: number } {
+  return { x: MAT_PADDING_MM / format.widthMm, y: MAT_PADDING_MM / format.heightMm };
+}
+
+/**
+ * 本文の最大測度（全角の字数）。日本語の本文はこれより長いと行を追えなくなる。
+ * 段組みをやめて1段で組む面でも、面の幅いっぱいには広げない根拠。
+ */
+export const MAX_MEASURE_CHARS = 45;
+
+/**
+ * 1段に置く最小行数。これを満たせない量を2段に割ると、
+ * 片方に1行だけ浮いて断片に見える。満たない章は1段で組む。
+ */
+export const MIN_COLUMN_LINES = 2;
+
+/**
  * 章ごとの扱い（第8章 8-5）。
  * ・visual：画像が面を支配する。前半（提案の見せ場）。
  * ・dense：情報密度を優先する。後半（実務の詰め）。
@@ -143,6 +166,9 @@ export function slotWidthRatio(slotId: string, spec: LayoutSpec = ADOPTED_LAYOUT
   const inner =
     1 - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm;
   const tile = (cols: number, gap: number): number => (inner - gap * (cols - 1)) / cols;
+  // タイルは台紙の内側に入るぶんだけ狭い。判定はこの実寸で行う（第8章 8-6）。
+  const matTile = (cols: number, gap: number): number =>
+    (inner - (MAT_PADDING_MM / A4_LANDSCAPE.widthMm) * 2 - gap * (cols - 1)) / cols;
 
   switch (slotId) {
     // 表紙とコンセプトは全面ブリード（余白を取らない）。
@@ -156,7 +182,7 @@ export function slotWidthRatio(slotId: string, spec: LayoutSpec = ADOPTED_LAYOUT
     case 'competitor-refs':
       return (1 - 0.008 * 2) / 3;
     case 'mood-tiles':
-      return tile(spec.moodboard.cols, spec.moodboard.gap);
+      return matTile(spec.moodboard.cols, spec.moodboard.gap);
     case 'shot-frames':
       return tile(spec.shots.perPage, 0.006);
     case 'cover-logo':

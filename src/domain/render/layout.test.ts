@@ -72,6 +72,7 @@ describe('tileGrid', () => {
 
   it('は面積を版面から導く（配置幅の判定根拠と同じ源）', () => {
     // タイルの配置幅は版面定義から出る。テンプレート側に mm の定数は無い。
-    expect(slotWidthMm('mood-tiles')).toBe(87);
+    // タイルは台紙の内側（安全マージン＋台紙余白）に入るぶんだけ狭い。
+    expect(slotWidthMm('mood-tiles')).toBe(83);
   });
 });

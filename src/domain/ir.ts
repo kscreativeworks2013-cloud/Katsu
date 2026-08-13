@@ -19,7 +19,7 @@ import type {
 import { effectivePpi, pickVariant, requiredPixels, resolveAsset } from './assets';
 import { slotWidthMm } from './render/layout';
 import { deriveTheme, type RenderTheme } from './render/theme';
-import { PROPOSAL_TEMPLATE, resolveSlot } from './proposal';
+import { PROPOSAL_TEMPLATE, resolveSlot, slotPoolSize } from './proposal';
 import { metaFor } from './provenance';
 
 export const IR_VERSION = 1;
@@ -86,6 +86,7 @@ export type IRWarningKind =
   | 'missing-section'
   | 'missing-image'
   | 'duplicate-image'
+  | 'over-capacity'
   | 'external-image'
   | 'low-resolution'
   | 'preview-only'
@@ -102,6 +103,11 @@ export interface IRWarning {
   severity: 'warn' | 'info';
   /** 対象の章ID。全体に関わる場合は undefined。 */
   sectionId?: string;
+  /**
+   * 対象のスロット名（章の中のどの枠か）。件数をまとめるときの見出しに使う。
+   * 章名だけだと「表紙1件」のように、画像の入っている面を疑わせる要約になる。
+   */
+  slot?: string;
   message: string;
 }
 
@@ -196,9 +202,22 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
         kind: 'missing-image',
         severity: 'info',
         sectionId,
+        slot: slot.label,
         message: `${section.ja}の「${slot.label}」に画像が登録されていません。`,
       });
       continue;
+    }
+
+    // 枠より供給元のほうが多い＝載らない素材がある。登録したのに出ないことは黙らせない。
+    const pool = slotPoolSize(slot, input.workspace, input.portfolio);
+    if (slot.exhaustive && pool > slot.capacity) {
+      warnings.push({
+        kind: 'over-capacity',
+        severity: 'info',
+        sectionId,
+        slot: slot.label,
+        message: `${section.ja}の「${slot.label}」は${slot.capacity}点までのため、登録済みの${pool}点のうち${pool - slot.capacity}点は出力に載りません。`,
+      });
     }
 
     for (const image of images) {
@@ -213,6 +232,7 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
           kind: 'missing-image',
           severity: 'info',
           sectionId,
+          slot: slot.label,
           message: `${section.ja}の「${image.caption}」に画像が登録されていません。`,
         });
       }
@@ -223,6 +243,7 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
           kind: 'external-image',
           severity: 'info',
           sectionId,
+          slot: slot.label,
           message: `${image.caption} は取り込めていないため、PDF・PowerPoint には含まれません。`,
         });
       }
@@ -233,6 +254,7 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
           kind: 'preview-only',
           severity: 'warn',
           sectionId,
+          slot: slot.label,
           message: `${image.caption} は表示用の縮小版しかないため、出力では画像が欠けます。原寸を登録し直してください。`,
         });
       }
@@ -242,11 +264,14 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
       const printWidthMm = slotWidthMm(slot.id);
       const needed = requiredPixels(printWidthMm);
       if (original && original.width > 0 && original.width < needed) {
+        // どの面の話かは章名で言う。スロット名（キービジュアル）だけだと、
+        // 同じ名前の枠を持つ表紙を疑わせる。
         warnings.push({
           kind: 'low-resolution',
           severity: 'warn',
           sectionId,
-          message: `${image.caption}（${slot.label}）は印刷解像度が不足しています：${effectivePpi(original.width, printWidthMm)}ppi（配置幅${printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
+          slot: slot.label,
+          message: `${image.caption}（${section.ja}）は印刷解像度が不足しています：${effectivePpi(original.width, printWidthMm)}ppi（配置幅${printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
         });
       }
 
@@ -277,6 +302,10 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
  * 提案の顔になるスロット（第8章 8-7）。ここに同じ画像が並ぶと、
  * 見た目で分かるほど手を抜いた提案になる。割当はテンプレート側でずらしているが、
  * 素材の点数が足りなければ回り込んで重複するため、その事実を出力前に言う。
+ *
+ * **ムードボードは対象に入れない。** ムードボードは素材の一覧であり、表紙や
+ * コンセプトに使った1枚がそこにも出るのは重複ではなく参照元の提示である。
+ * これを重複として数えると、正常な構成で常時警告が出て、本当の重複が埋もれる。
  */
 const PROMINENT_SLOTS = ['cover-key', 'brand-mood', 'concept-key'];
 

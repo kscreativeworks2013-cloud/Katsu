@@ -79,10 +79,13 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const titles = new Map(ir.sections.map((section) => [section.id, section.title]));
 
   const missing = info.filter((warning) => warning.kind === 'missing-image');
+  // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
+  // 未登録があるように読めてしまう（実体はロゴ枠）。
   const perSection = new Map<string, number>();
   for (const warning of missing) {
-    const title = titles.get(warning.sectionId ?? '') ?? warning.sectionId ?? '章外';
-    perSection.set(title, (perSection.get(title) ?? 0) + 1);
+    const key =
+      warning.slot ?? titles.get(warning.sectionId ?? '') ?? warning.sectionId ?? '章外';
+    perSection.set(key, (perSection.get(key) ?? 0) + 1);
   }
 
   const lines = [

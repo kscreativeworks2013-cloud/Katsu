@@ -53,19 +53,45 @@ describe('low-resolution 警告', () => {
     expect(tileOnly.warnings.some((warning) => warning.kind === 'low-resolution')).toBe(false);
   });
 
-  it('は同じ画像が複数スロットに出ても要約では1行に畳む', () => {
-    // タイルが1枚しか無ければ、表紙と撮影コンセプト（どちらも 297mm スロット）は
-    // 同じ1枚に回り込む。同じ配置幅・同じ画像なので警告は同文で2件出る。
-    const base = workspaceWithAsset('ast-low');
+  it('は面ごとに1行にし、どの面かを章名で言う', () => {
+    // タイルが1枚しか無ければ、表紙・ブランド分析・撮影コンセプトは同じ1枚に回り込む。
+    // 同じ画像でも面ごとに配置幅が違うので、面の数だけ行が出る。
+    const base = workspaceWithAsset('ast-tiny');
     const ir = buildTestIR({
-      assets: { 'ast-low': LOW_RES },
+      assets: { 'ast-tiny': testAsset('ast-tiny', { width: 800, height: 1200 }) },
       workspace: { ...base, moodboard: base.moodboard.slice(0, 1) },
     });
-    const raw = ir.warnings.filter((warning) => warning.kind === 'low-resolution');
     const summary = warningSummary(ir).filter((line) => line.includes('印刷解像度'));
 
+    expect(summary).toHaveLength(3);
+    // どの面の話かはスロット名ではなく章名で言う（同名の枠を持つ表紙を疑わせない）。
+    expect(summary.filter((line) => line.includes('（撮影コンセプト）'))).toHaveLength(1);
+    expect(summary.filter((line) => line.includes('（ブランド分析）'))).toHaveLength(1);
+    expect(summary.some((line) => line.includes('キービジュアル'))).toBe(false);
+  });
+
+  it('は面をまたいで同文になる警告だけを畳む', () => {
+    // 原寸が無い（preview だけ）は面によらず同じ事実なので、何面に出ても1行。
+    const previewOnly = testAsset('ast-prev', {
+      variants: [
+        {
+          kind: 'preview',
+          key: 'ast-prev:preview',
+          width: 800,
+          height: 600,
+          bytes: 1000,
+          mimeType: 'image/jpeg',
+        },
+      ],
+    });
+    const ir = buildTestIR({
+      assets: { 'ast-prev': previewOnly },
+      workspace: workspaceWithAsset('ast-prev'),
+    });
+    const raw = ir.warnings.filter((warning) => warning.kind === 'preview-only');
+
     expect(raw.length).toBeGreaterThan(1);
-    expect(summary).toHaveLength(1);
+    expect(warningSummary(ir).filter((line) => line.includes('縮小版'))).toHaveLength(1);
   });
 
   it('は成果物にも残る（画面で見ただけでは後から分からない）', async () => {

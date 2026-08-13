@@ -22,6 +22,12 @@ export interface ImageSlot {
    * 枚数が足りない場合は先頭へ回り込むため、重複は起こりうる（IR 側で検知する）。
    */
   offset?: number;
+  /**
+   * 供給元を全点見せる枠か（ムードボード・競合・実績）。
+   * true の枠で枠数を超えた素材は「登録したのに出ない」ことになるので知らせる。
+   * 表紙のように供給元から1点を選ぶだけの枠は、超過が正常なので対象にしない。
+   */
+  exhaustive?: boolean;
 }
 
 // 配置幅（mm）はここには置かない。版面定義から導出する（`slotWidthMm`／第8章 8-4）。
@@ -79,6 +85,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: '競合のビジュアル',
         source: 'competitors',
         capacity: 3,
+        exhaustive: true,
       },
     ],
   },
@@ -100,7 +107,16 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     id: 'moodboard',
     ja: 'ムードボード',
     en: 'Mood Board',
-    imageSlots: [{ id: 'mood-tiles', label: 'タイル', source: 'moodboard', capacity: 8 }],
+    // ムードボードは素材の一覧そのものなので、枠は版面の面数で決める（3×2×2面＝12）。
+    imageSlots: [
+      {
+        id: 'mood-tiles',
+        label: 'タイル',
+        source: 'moodboard',
+        capacity: 12,
+        exhaustive: true,
+      },
+    ],
   },
   {
     id: 'shots',
@@ -126,6 +142,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: '選定作品',
         source: 'portfolio',
         capacity: 3,
+        exhaustive: true,
       },
     ],
   },
@@ -143,6 +160,26 @@ export interface ResolvedSlotImage {
   fallback?: { from: string; to: string };
   /** 切り出し位置の指定（第8章 8-7）。無指定なら版面側の既定（上寄せ）で切る。 */
   focus?: CropFocus;
+}
+
+/** スロットの供給元にある点数。枠より多ければ載らない素材があるということ（第8章 8-7）。 */
+export function slotPoolSize(
+  slot: ImageSlot,
+  workspace: Workspace,
+  portfolio: PortfolioWork[],
+): number {
+  switch (slot.source) {
+    case 'logo':
+      return 0;
+    case 'moodboard':
+      return workspace.moodboard.length;
+    case 'shots':
+      return workspace.shots.length;
+    case 'competitors':
+      return workspace.competitors.length;
+    case 'portfolio':
+      return portfolio.length;
+  }
 }
 
 /**

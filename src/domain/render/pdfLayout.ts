@@ -27,6 +27,9 @@ import { wrapText } from './kinsoku';
 import {
   A4_LANDSCAPE,
   ADOPTED_LAYOUT,
+  MAX_MEASURE_CHARS,
+  MIN_COLUMN_LINES,
+  matPadding,
   safeMargin,
   sectionMode,
   tileGrid,
@@ -163,6 +166,12 @@ function distribute<T>(items: T[], weight: (item: T) => number, columns: number)
     filled += size;
   }
   return groups;
+}
+
+/** 本文の段割り（段ごとの項目と、段の幅）。 */
+interface ColumnPlan {
+  groups: FlowEntry[][];
+  colW: number;
 }
 
 /** 版面を実寸に展開して描くための道具。座標変換と切り抜きをここに閉じる。 */
@@ -309,18 +318,34 @@ class Sheet {
   }
 
   /**
-   * 本文を段に釣り合わせて流し、入り切らなかった行を返す（第8章 8-6）。
-   * 1段に収まる量でも右半分を空けたままにしない。段からの溢れは次の段へ送る。
-   * 段落は割らないので、段の切れ目が文の途中に来ることはない。
+   * 本文の段割り（第8章 8-6）。
+   *
+   * 2段に釣り合わせるのは、どの段も最小行数を満たせるときだけ。満たせない章を割ると、
+   * 片方に1行だけ浮いて断片に見える。その場合は1段で組み、測度は最大字数で頭打ちにする
+   * （面の幅いっぱいに広げると、今度は行が追えなくなる）。
    */
-  columns(lines: string[], rect: Rect, gap: number): string[] {
-    const columns = 2;
-    const colW = (rect.w - gap * (columns - 1)) / columns;
+  private plan(lines: string[], widthRatio: number, gap: number): ColumnPlan {
     const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
-    const groups = distribute(entries, (entry) => this.lines(entry, colW), columns);
+    const colW = (widthRatio - gap) / 2;
+    const groups = distribute(entries, (entry) => this.lines(entry, colW), 2);
+    const enough = groups.every(
+      (group) =>
+        group.reduce((sum, entry) => sum + this.lines(entry, colW), 0) >= MIN_COLUMN_LINES,
+    );
+    if (enough) return { groups, colW };
+
+    return {
+      groups: [entries],
+      colW: Math.min(widthRatio, (MAX_MEASURE_CHARS * this.size('body')) / this.format.widthPt),
+    };
+  }
+
+  /** 本文を流し、入り切らなかった行を返す。段からの溢れは次の段へ送る。 */
+  columns(lines: string[], rect: Rect, gap: number): string[] {
+    const { groups, colW } = this.plan(lines, rect.w, gap);
 
     let carry: FlowEntry[] = [];
-    for (let column = 0; column < columns; column += 1) {
+    for (let column = 0; column < groups.length; column += 1) {
       carry = this.flow([...carry, ...groups[column]], {
         ...rect,
         x: rect.x + column * (colW + gap),
@@ -331,10 +356,8 @@ class Sheet {
   }
 
   /** 段に割ったときに要る高さ（最も高い段）。画像帯の高さを決めるのに使う。 */
-  columnHeight(lines: string[], widthRatio: number, columns: number, gap: number): number {
-    const colW = (widthRatio - gap * (columns - 1)) / columns;
-    const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
-    const groups = distribute(entries, (entry) => this.lines(entry, colW), columns);
+  columnHeight(lines: string[], widthRatio: number, gap: number): number {
+    const { groups, colW } = this.plan(lines, widthRatio, gap);
     return Math.max(...groups.map((group) => this.height(group, colW)), 0);
   }
 
@@ -671,7 +694,7 @@ export async function renderLayoutPdf(
     const bodyW = 1 - margin.x * 2;
 
     // 本文を2段に割ったときの高さから帯を決める。上限・下限は版面定義に従う。
-    const bodyH = page.columnHeight(lines, bodyW, 2, spec.dense.gap);
+    const bodyH = page.columnHeight(lines, bodyW, spec.dense.gap);
     const band = clamp(
       1 - margin.y - bodyH - spec.type.heading - afterHeading - captionRatio - 0.02,
       spec.band.min,
@@ -723,21 +746,26 @@ export async function renderLayoutPdf(
     for (let start = 0; start < blocks.length; start += perPage) {
       const page = sheet();
       const head = headTop;
-      const area: Rect = {
+      // 台紙は安全マージンに揃える（版面とも断ち落としとも違う位置に線を作らない）。
+      // タイル領域だけに敷き、ページ全体の紙色は変えない。
+      // 台紙は見出しより先に置く（後から敷くと見出しに重なる）。
+      const mat: Rect = {
         x: margin.x,
         y: head + afterHeading,
         w: 1 - margin.x * 2,
         h: 1 - head - afterHeading - margin.y,
       };
-
-      // タイル領域だけに台紙を敷く。ページ全体の紙色は変えない。
-      // 台紙は見出しより先に置く（後から敷くと見出しに重なる）。
-      const bleed = 0.018;
-      page.fill(
-        { x: area.x - bleed, y: area.y - bleed, w: area.w + bleed * 2, h: area.h + bleed * 2 },
-        palette.mat,
-      );
+      page.fill(mat, palette.mat);
       page.line(title, { x: margin.x, y: head }, { size: page.size('heading') });
+
+      // タイルは台紙の内側へ入る。台紙が縁として成立する最小限の余白。
+      const pad = matPadding(format);
+      const area: Rect = {
+        x: mat.x + pad.x,
+        y: mat.y + pad.y,
+        w: mat.w - pad.x * 2,
+        h: mat.h - pad.y * 2,
+      };
 
       const onPage = Math.min(perPage, blocks.length - start);
       const cells = tileGrid(onPage, area, {
@@ -781,7 +809,7 @@ export async function renderLayoutPdf(
       // 半端なカットは次の段へ送り、面をまたがせない（2枚だけの面を作らない）。
       const usedRows = Math.ceil(onPage / perPage);
 
-      const bodyH = page.columnHeight(rest, bodyW, 2, spec.dense.gap);
+      const bodyH = page.columnHeight(rest, bodyW, spec.dense.gap);
       // 仕様が短い面では帯を伸ばして下部の空きを詰める。上限は版面定義（段数ぶん緩める）。
       const band = clamp(
         1 - margin.y - bodyH - top - 0.02,
