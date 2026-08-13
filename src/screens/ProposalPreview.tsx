@@ -4,11 +4,38 @@ import type { CropFocus, ProposalBody } from '../data/types';
 import { ASSET_ORIGIN_LABEL } from '../domain/assets';
 import type { Lang } from '../domain/ir';
 import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/proposal';
+import type { PortfolioWork, Workspace } from '../data/types';
 import { isProtected } from '../domain/provenance';
 import { staleStepLabels } from '../lib/projects';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { AssetImage } from '../ui/AssetImage';
 import { Card, PageHeader } from '../ui/primitives';
+
+/** 枠の供給元にある項目（選択UIの候補）。 */
+function slotPool(
+  slot: ProposalSection['imageSlots'][number],
+  workspace: Workspace,
+  portfolio: PortfolioWork[],
+): { id: string; label: string }[] {
+  switch (slot.source) {
+    case 'moodboard':
+      return workspace.moodboard.map((tile) => ({ id: tile.id, label: tile.caption }));
+    case 'shots':
+      return workspace.shots.map((shot) => ({
+        id: shot.id,
+        label: `Cut ${shot.no}｜${shot.subject}`,
+      }));
+    case 'competitors':
+      return workspace.competitors.map((competitor) => ({
+        id: competitor.id,
+        label: competitor.name,
+      }));
+    case 'portfolio':
+      return portfolio.map((work) => ({ id: work.id, label: work.title }));
+    case 'logo':
+      return [];
+  }
+}
 
 /** 未生成の章から、生成しに行くべきステップへの導線。 */
 const SECTION_STEP: Record<string, string> = {
@@ -114,6 +141,61 @@ function CropFocusPicker({
 }
 
 /**
+ * 枠に載せる項目の選択（第8章 8-7）。
+ * 供給元が枠数を超えるとき、どれを載せるかは提案書ごとに変わる（実績が典型）。
+ * 既定は供給元の先頭から枠数ぶん。選択は保存されるが、生成物ではないので
+ * provenance では扱わず、再生成でも保護しない。
+ */
+function SlotPicker({
+  slot,
+  pool,
+  picks,
+  onChange,
+}: {
+  slot: ProposalSection['imageSlots'][number];
+  pool: { id: string; label: string }[];
+  picks: string[] | undefined;
+  onChange: (ids: string[]) => void;
+}) {
+  if (pool.length <= slot.capacity) return null;
+  const chosen = picks ?? pool.slice(0, slot.capacity).map((item) => item.id);
+
+  return (
+    <details className="stack" style={{ gap: 6, marginTop: 6 }}>
+      <summary className="muted">
+        掲載する{slot.label}を選ぶ（{pool.length}件中{slot.capacity}件）
+      </summary>
+      <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+        {pool.map((item) => {
+          const on = chosen.includes(item.id);
+          return (
+            <label className="row" style={{ gap: 6 }} key={item.id}>
+              <input
+                type="checkbox"
+                checked={on}
+                // 枠数に達したら、選んでいないものは押せない（先に外してもらう）。
+                disabled={!on && chosen.length >= slot.capacity}
+                onChange={() =>
+                  onChange(on ? chosen.filter((id) => id !== item.id) : [...chosen, item.id])
+                }
+              />
+              <span>{item.label}</span>
+            </label>
+          );
+        })}
+        <button
+          className="btn btn--ghost btn--small"
+          type="button"
+          onClick={() => onChange([])}
+        >
+          既定に戻す
+        </button>
+      </div>
+    </details>
+  );
+}
+
+/**
  * 章の画像スロット（第5章 5-2）。アセット未登録・サムネイル退避時は
  * グラデーションやプレースホルダにフォールバックし、参照切れで壊れない。
  */
@@ -122,21 +204,32 @@ function SectionSlots({
   slots,
   crops,
   onCrop,
+  picks,
+  onPick,
 }: {
   section: ProposalSection;
   slots: {
     slot: ProposalSection['imageSlots'][number];
     images: ReturnType<typeof resolveSlot>;
+    pool: { id: string; label: string }[];
   }[];
   crops: Record<string, CropFocus>;
   onCrop: (key: string, focus: CropFocus | null) => void;
+  picks: Record<string, string[]>;
+  onPick: (slotId: string, ids: string[]) => void;
 }) {
   if (section.imageSlots.length === 0) return null;
   return (
     <div className="stack" style={{ marginTop: 16 }}>
-      {slots.map(({ slot, images }) => (
+      {slots.map(({ slot, images, pool }) => (
         <div key={slot.id}>
           <p className="muted">{slot.label}</p>
+          <SlotPicker
+            slot={slot}
+            pool={pool}
+            picks={picks[slot.id]}
+            onChange={(ids) => onPick(slot.id, ids)}
+          />
           {images.length === 0 ? (
             <div className="slot-placeholder">{slot.label}は未登録です</div>
           ) : (
@@ -182,6 +275,7 @@ export function ProposalPreviewScreen() {
     requestRun,
     editField,
     setCropFocus,
+    setSlotPicks,
     portfolio,
     assets,
     provenance: allProvenance,
@@ -256,6 +350,7 @@ export function ProposalPreviewScreen() {
             const slots = section.imageSlots.map((slot) => ({
               slot,
               images: resolveSlot(slot, workspace, portfolio, assets),
+              pool: slotPool(slot, workspace, portfolio),
             }));
             const hasImages = slots.some(({ images }) => images.length > 0);
             const step = SECTION_STEP[section.id];
@@ -296,6 +391,8 @@ export function ProposalPreviewScreen() {
                       slots={slots}
                       crops={workspace.crops ?? {}}
                       onCrop={(key, focus) => setCropFocus(projectId, key, focus)}
+                      picks={workspace.picks ?? {}}
+                      onPick={(slotId, ids) => setSlotPicks(projectId, slotId, ids)}
                     />
                   </>
                 )}

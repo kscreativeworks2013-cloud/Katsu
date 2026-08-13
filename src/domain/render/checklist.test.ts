@@ -23,10 +23,44 @@ describe('checklistSummary', () => {
     expect(line).not.toContain('表紙1');
   });
 
-  it('は指摘が無ければ何も出さない', () => {
+  it('は全点が載っていて指摘も無ければ何も出さない', () => {
     const ir = buildTestIR();
-    const empty = { ...ir, warnings: [] };
+    const empty = {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0 })),
+    };
 
     expect(checklistSummary(empty)).toEqual([]);
+  });
+
+  it('は載らなかった件数を枠の使われ方から出す（警告の積み忘れに依存しない）', () => {
+    const ir = buildTestIR();
+    const trimmed = {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) =>
+        slot.slotId === 'mood-tiles' ? { ...slot, pool: 20, shown: 12 } : slot,
+      ),
+    };
+
+    expect(checklistSummary(trimmed)).toContain(
+      'ムードボードは20件中12件のみ掲載されます（「タイル」の枠）。',
+    );
+  });
+
+  it('は説明文の無い画像を件数で出す（内部の名前を版面に出さない）', () => {
+    const ir = buildTestIR();
+    const unnamed = {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) =>
+        slot.slotId === 'mood-tiles' ? { ...slot, pool: slot.shown, unnamed: 2 } : slot,
+      ),
+    };
+
+    expect(checklistSummary(unnamed).some((line) => line.includes('説明文が未設定'))).toBe(
+      true,
+    );
   });
 });

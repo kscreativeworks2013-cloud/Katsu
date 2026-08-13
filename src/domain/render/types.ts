@@ -78,6 +78,23 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const info = ir.warnings.filter((warning) => warning.severity === 'info');
   const titles = new Map(ir.sections.map((section) => [section.id, section.title]));
 
+  /*
+   * 載らなかった件数は IR が持つ枠の使われ方から作る（第8章 8-7）。
+   * 警告として積む形だと、積み忘れた経路で「登録したのに出ない」が黙って通る。
+   * 件数そのものを持たせておけば、差がある限り必ずここに出る。
+   */
+  const dropped = ir.slots
+    .filter((slot) => slot.exhaustive && slot.pool > slot.shown)
+    .map(
+      (slot) =>
+        `${slot.sectionTitle}は${slot.pool}件中${slot.shown}件のみ掲載されます（「${slot.slotLabel}」の枠）。`,
+    );
+  const unnamed = ir.slots.reduce((sum, slot) => sum + slot.unnamed, 0);
+  const naming =
+    unnamed > 0
+      ? [`説明文が未設定の画像が${unnamed}件あります（枠の下は出自だけになります）。`]
+      : [];
+
   const missing = info.filter((warning) => warning.kind === 'missing-image');
   // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
   // 未登録があるように読めてしまう（実体はロゴ枠）。
@@ -90,6 +107,8 @@ export function checklistSummary(ir: ProposalIR): string[] {
 
   const lines = [
     ...new Set(info.filter((w) => w.kind !== 'missing-image').map((w) => w.message)),
+    ...dropped,
+    ...naming,
   ];
   if (missing.length === 0) return lines;
 

@@ -184,10 +184,22 @@ export function slotPoolSize(
 
 /**
  * 供給元から、このスロットの取り分を切り出す。
- * offset で開始位置をずらし、足りない場合だけ先頭へ回り込む（面が空になるより重複を採る）。
+ *
+ * 選択（`Workspace.picks`）があればその順に載せる。提案書ごとに見せる実績を変えるのは
+ * 実務の前提なので、先頭固定にしない。選択が無ければ offset の位置から枠数ぶん取り、
+ * 足りない場合だけ先頭へ回り込む（面が空になるより重複を採る）。
  */
-function take<T>(pool: T[], slot: ImageSlot): T[] {
+function take<T extends { id: string }>(pool: T[], slot: ImageSlot, picks?: string[]): T[] {
   if (pool.length === 0) return [];
+
+  if (picks && picks.length > 0) {
+    const chosen = picks
+      .map((id) => pool.find((item) => item.id === id))
+      .filter((item): item is T => item !== undefined)
+      .slice(0, slot.capacity);
+    if (chosen.length > 0) return chosen;
+  }
+
   const count = Math.min(slot.capacity, pool.length);
   const start = (slot.offset ?? 0) % pool.length;
   return Array.from({ length: count }, (_, index) => pool[(start + index) % pool.length]);
@@ -204,13 +216,14 @@ export function resolveSlot(
     ...image,
     focus: workspace.crops?.[image.key],
   });
+  const picks = workspace.picks?.[slot.id];
 
   switch (slot.source) {
     case 'logo':
       // ロゴアセットの登録UIは実装前のため、常に空（プレースホルダ表示）になる。
       return [];
     case 'moodboard':
-      return take(workspace.moodboard, slot).map((tile) =>
+      return take(workspace.moodboard, slot, picks).map((tile) =>
         withFocus({
           key: `${slot.id}-${tile.id}`,
           caption: tile.caption,
@@ -219,7 +232,7 @@ export function resolveSlot(
         }),
       );
     case 'shots':
-      return take(workspace.shots, slot).map((shot) =>
+      return take(workspace.shots, slot, picks).map((shot) =>
         withFocus({
           key: `${slot.id}-${shot.id}`,
           // キャプションは識別子だけにする。被写体・レンズ・構図は本文が持っており、
@@ -229,7 +242,7 @@ export function resolveSlot(
         }),
       );
     case 'competitors':
-      return take(workspace.competitors, slot).map((competitor) =>
+      return take(workspace.competitors, slot, picks).map((competitor) =>
         withFocus({
           key: `${slot.id}-${competitor.id}`,
           caption: competitor.name,
@@ -237,7 +250,7 @@ export function resolveSlot(
         }),
       );
     case 'portfolio':
-      return take(portfolio, slot).map((work) =>
+      return take(portfolio, slot, picks).map((work) =>
         withFocus({
           key: `${slot.id}-${work.id}`,
           caption: work.title,

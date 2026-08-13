@@ -679,6 +679,20 @@ export function AppStoreProvider({
     [],
   );
 
+  /**
+   * 枠に載せる項目の選択（第8章 8-7）。切り出し位置と同じく利用者の判断なので、
+   * provenance では扱わず、下流も stale にしない（本文は変わらない）。
+   */
+  const setSlotPicks = useCallback((projectId: string, slotId: string, ids: string[]) => {
+    setWorkspaces((current) => {
+      const workspace = current[projectId] ?? emptyWorkspace();
+      const picks = { ...workspace.picks };
+      if (ids.length > 0) picks[slotId] = ids;
+      else delete picks[slotId];
+      return { ...current, [projectId]: { ...workspace, picks } };
+    });
+  }, []);
+
   const recordExports = useCallback(
     (projectId: string, records: ExportRecord[]) => {
       setWorkspaces((current) => {
@@ -889,6 +903,7 @@ export function AppStoreProvider({
       editField,
       setAdoptedConcept,
       setCropFocus,
+      setSlotPicks,
       recordExports,
       assetStorage,
       binaryStore: store,
@@ -923,6 +938,7 @@ export function AppStoreProvider({
       editField,
       setAdoptedConcept,
       setCropFocus,
+      setSlotPicks,
       recordExports,
       assetStorage,
       store,

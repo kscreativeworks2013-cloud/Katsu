@@ -215,7 +215,7 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
     /*
      * 説明文は素材に紐づける。項目数を超えた分でシードの説明を巻き戻すと、
      * 別の画像に同じキャプションが付く（実際に2面目で再現した）。
-     * 超えた分は素材側の名前を使い、循環させない。
+     * 超えた分は**空**にする。ファイル名で埋めると内部の名前が納品物に載る。
      */
     // アセットIDは素材の名前から作る。連番にすると、同じ写真を2か所に置いても
     // 別アセットとして登録され、重複検知が働かない。
@@ -228,7 +228,7 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
       return {
         ...(seed ?? base.moodboard[0]),
         id: `mood-${index}`,
-        caption: seed ? seed.caption : photo.name.replace(/\.jpg$/, ''),
+        caption: seed ? seed.caption : '',
         assetId: id,
       };
     });
@@ -240,7 +240,7 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
         ...seed,
         id: `shot-${index}`,
         no: index + 1,
-        subject: base.shots[index] ? seed.subject : photo.name.replace(/\.jpg$/, ''),
+        subject: base.shots[index] ? seed.subject : '',
         assetId: id,
       };
     });

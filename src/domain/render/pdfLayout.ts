@@ -499,10 +499,15 @@ export async function renderLayoutPdf(
     return image;
   };
 
-  /** キャプションは必ず出自つきで出す（第5章 5-1：説明責任）。 */
+  /**
+   * キャプションは必ず出自つきで出す（第5章 5-1：説明責任）。
+   * 説明文が無い枠では出自だけを出す。素材のファイル名で埋めると、内部の名前が
+   * 納品物に載る（実測：08-mood-high がそのまま出た）。未設定は提出前チェックで数える。
+   */
   const caption = (block: ImageBlock): string => {
     const origin = block.assetOrigin ? ORIGIN_LABEL[block.assetOrigin] : '画像未登録';
-    return `${block.caption}（${origin}）`;
+    const label = block.caption.trim();
+    return label === '' ? origin : `${label}（${origin}）`;
   };
 
   /** 枠に画像かプレースホルダを置き、下にキャプションを添える。 */

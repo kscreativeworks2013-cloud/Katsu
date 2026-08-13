@@ -104,6 +104,10 @@ export interface AppStore {
    * null を渡すと既定（上寄せ）に戻る。
    */
   setCropFocus: (projectId: string, key: string, focus: CropFocus | null) => void;
+  /**
+   * 枠に載せる項目の選択（第8章 8-7）。空配列を渡すと既定（供給元の先頭から）に戻る。
+   */
+  setSlotPicks: (projectId: string, slotId: string, ids: string[]) => void;
   recordExports: (projectId: string, records: ExportRecord[]) => void;
 
   /** 画像の実体まわりの状態（第7章）。 */

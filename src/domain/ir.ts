@@ -86,7 +86,6 @@ export type IRWarningKind =
   | 'missing-section'
   | 'missing-image'
   | 'duplicate-image'
-  | 'over-capacity'
   | 'external-image'
   | 'low-resolution'
   | 'preview-only'
@@ -111,6 +110,31 @@ export interface IRWarning {
   message: string;
 }
 
+/**
+ * 枠の使われ方（第8章 8-7）。供給元に何件あり、実際に何件載ったかを IR が持つ。
+ *
+ * 警告として「超過しています」を積むだけだと、警告を積み忘れた経路（あるいは IR に
+ * 渡す前に間引く経路）で、載らなかった事実が黙って消える。件数そのものを IR に
+ * 持たせ、提出前チェックはこの差分から作る。
+ */
+export interface IRSlotUsage {
+  slotId: string;
+  slotLabel: string;
+  sectionId: string;
+  sectionTitle: string;
+  /** 供給元にある項目数（IR が受け取った時点）。 */
+  pool: number;
+  /** 実際に枠へ載った数。 */
+  shown: number;
+  /**
+   * 供給元を全点見せる枠か。表紙のように1点を選ぶ枠は、余りが出るのが正常なので
+   * 差分を「載らなかった」とは数えない（数えると正常な構成で常時警告が出る）。
+   */
+  exhaustive: boolean;
+  /** 説明文が付いていない枠の数（キャプション未設定）。 */
+  unnamed: number;
+}
+
 export interface ProposalIR {
   irVersion: number;
   revision: string;
@@ -126,6 +150,8 @@ export interface ProposalIR {
   };
   sections: IRSection[];
   warnings: IRWarning[];
+  /** 枠ごとの供給元件数と掲載件数（第8章 8-7）。提出前チェックの根拠。 */
+  slots: IRSlotUsage[];
   /** 版面色。ブランドのパレットから導出する（第8章 8-7）。出力形式によらず同じ値を使う。 */
   theme: RenderTheme;
   sources: {
@@ -190,7 +216,12 @@ function toBlocks(lines: string[]): IRBlock[] {
   return blocks;
 }
 
-function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning[]): IRBlock[] {
+function imageBlocks(
+  sectionId: string,
+  input: BuildIRInput,
+  warnings: IRWarning[],
+  usage: IRSlotUsage[],
+): IRBlock[] {
   const section = PROPOSAL_TEMPLATE.find((item) => item.id === sectionId);
   if (!section) return [];
 
@@ -208,20 +239,17 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
       continue;
     }
 
-    // 枠より供給元のほうが多い＝載らない素材がある。登録したのに出ないことは黙らせない。
-    const pool = slotPoolSize(slot, input.workspace, input.portfolio);
-    if (slot.exhaustive && pool > slot.capacity) {
-      warnings.push({
-        kind: 'over-capacity',
-        severity: 'info',
-        sectionId,
-        slot: slot.label,
-        // 「登録済み」とは言わない。ここで数えているのは供給元の**項目数**（実績なら
-        // ポートフォリオの件数）であって、画像の登録状況ではない。同じ面に出る
-        // 「画像未登録」の件数と混ざると、両立しない2文が並ぶ。
-        message: `${section.ja}は${pool}件中${slot.capacity}件のみ掲載されます（「${slot.label}」の枠は${slot.capacity}点）。`,
-      });
-    }
+    // 供給元の件数と、実際に載った件数を残す。差分の言い方は出力側が決める。
+    usage.push({
+      slotId: slot.id,
+      slotLabel: slot.label,
+      sectionId,
+      sectionTitle: input.lang === 'ja' ? section.ja : section.en,
+      pool: slotPoolSize(slot, input.workspace, input.portfolio),
+      shown: images.length,
+      exhaustive: slot.exhaustive === true,
+      unnamed: images.filter((image) => image.caption.trim() === '').length,
+    });
 
     for (const image of images) {
       const asset = image.asset ?? resolveAsset(input.assets, undefined);
@@ -398,10 +426,11 @@ export function computeRevision(ir: RevisionInput): string {
 export function buildProposalIR(input: BuildIRInput): ProposalIR {
   const warnings: IRWarning[] = [];
   const sections: IRSection[] = [];
+  const slots: IRSlotUsage[] = [];
 
   for (const template of PROPOSAL_TEMPLATE) {
     const body = input.workspace.proposalBody?.[template.id];
-    const images = imageBlocks(template.id, input, warnings);
+    const images = imageBlocks(template.id, input, warnings, slots);
     const lines = body ? (input.lang === 'ja' ? body.ja : body.en) : [];
     const blocks = [...toBlocks(lines), ...images];
 
@@ -456,6 +485,7 @@ export function buildProposalIR(input: BuildIRInput): ProposalIR {
     },
     sections,
     warnings,
+    slots,
     theme: deriveTheme(input.workspace.brand?.palette),
     sources: {
       runIds,

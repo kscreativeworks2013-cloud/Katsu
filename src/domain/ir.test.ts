@@ -163,7 +163,7 @@ describe('警告', () => {
     );
   });
 
-  it('は枠に載り切らない素材の点数を知らせる', () => {
+  it('は枠ごとに供給元の件数と掲載件数を持つ', () => {
     // 登録したのに出力に出ない、を黙って起こさない（第8章 8-7）。
     const base = workspaceWithBody();
     const ir = buildTestIR({
@@ -173,30 +173,23 @@ describe('警告', () => {
         moodboard: [...base.moodboard, ...base.moodboard].slice(0, 14),
       },
     });
-    const over = ir.warnings.find(
-      (warning) => warning.kind === 'over-capacity' && warning.slot === 'タイル',
-    );
+    const tiles = ir.slots.find((slot) => slot.slotId === 'mood-tiles');
 
-    expect(over?.severity).toBe('info');
-    expect(over?.message).toMatch(/14件中12件のみ掲載されます/);
+    expect(tiles).toMatchObject({ pool: 14, shown: 12, sectionTitle: 'ムードボード' });
   });
 
-  it('は枠に収まっている枠については知らせない', () => {
-    // シードのタイルは8点で枠は12。全点載るので黙る。
-    const warnings = buildTestIR().warnings.filter(
-      (warning) => warning.kind === 'over-capacity',
-    );
+  it('は枠に収まっていれば供給元と掲載件数が一致する', () => {
+    // シードのタイルは8点で枠は12。全点載る。
+    const tiles = buildTestIR().slots.find((slot) => slot.slotId === 'mood-tiles');
 
-    expect(warnings.some((warning) => warning.slot === 'タイル')).toBe(false);
+    expect(tiles?.pool).toBe(tiles?.shown);
   });
 
-  it('は供給元から選ぶだけの枠（表紙）では超過を数えない', () => {
-    // 表紙のキービジュアルはムードボード8点から1点を選ぶ枠。7点余るのが正常。
-    const warnings = buildTestIR().warnings.filter(
-      (warning) => warning.kind === 'over-capacity',
-    );
+  it('は供給元から選ぶだけの枠（表紙）でも件数をそのまま持つ', () => {
+    // 表紙のキービジュアルはムードボード8点から1点を選ぶ枠。差分の扱いは出力側が決める。
+    const cover = buildTestIR().slots.find((slot) => slot.slotId === 'cover-key');
 
-    expect(warnings.some((warning) => warning.slot === 'キービジュアル')).toBe(false);
+    expect(cover).toMatchObject({ pool: 8, shown: 1 });
   });
 
   it('は目立つスロットの重複を検知する（素材が足りず回り込んだとき）', () => {

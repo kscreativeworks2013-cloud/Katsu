@@ -290,6 +290,12 @@ export interface Workspace {
    * （`<スロットID>-<項目ID>`）。生成物ではなく利用者の指定なので provenance では扱わない。
    */
   crops?: Record<string, CropFocus>;
+  /**
+   * 枠に載せる項目の選択（第8章 8-7）。キーはスロットID、値は供給元の項目IDを掲載順に。
+   * 未設定なら供給元の先頭から枠数ぶん（既定）。提案書ごとに見せる実績を変えるといった
+   * 選択は生成物ではなく利用者の判断なので、provenance では扱わず再生成でも保護しない。
+   */
+  picks?: Record<string, string[]>;
   exports: ExportRecord[];
 }
 
