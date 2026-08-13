@@ -189,10 +189,10 @@ function projectWithImages(): { workspace: Workspace; assets: Record<string, Ass
   };
 
   if (real.length > 0) {
-    // 実写がある場合：先頭を表紙（＝ムードボード先頭タイル）、続きをムードボード、
-    // 最後の1点をショットリストへ。素材の無いタイルは落とし、判断を素材のある面に絞る。
-    const forMood = real.slice(0, Math.max(1, real.length - 1));
-    const forShots = real.slice(Math.max(1, real.length - 1));
+    // 実写がある場合：ファイル名に shot を含むものはショットリスト、それ以外は
+    // ムードボード（先頭は表紙のキービジュアルにもなる）。素材の無いタイルは落とす。
+    const forShots = real.filter((photo) => photo.name.includes('shot'));
+    const forMood = real.filter((photo) => !photo.name.includes('shot'));
 
     const moodboard = forMood.map((photo, index) => {
       const id = `ast-mood-${index}`;

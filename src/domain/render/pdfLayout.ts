@@ -32,6 +32,7 @@ import {
   type Rect,
 } from './layout';
 import { splitRuns } from './textRuns';
+import { warningSummary } from './types';
 
 const INK = rgb(0.07, 0.06, 0.05);
 const MUTED = rgb(0.54, 0.51, 0.47);
@@ -522,6 +523,27 @@ export async function renderLayoutPdf(
     denseQueue.push({ title: section.title, lines });
   }
   flushDense();
+
+  // 出力物にも警告を残す（第6章 6-4、第7章 7-8）。画面で確認しただけでは、
+  // 手元に落ちた PDF がどの状態で出たのか後から分からない。
+  const notes = warningSummary(ir);
+  if (notes.length > 0) {
+    const page = sheet();
+    page.line(
+      '出力時の注意',
+      { x: margin.x, y: margin.y + spec.type.heading },
+      { size: page.size('heading') },
+    );
+    page.flow(
+      notes.map((note) => ({ text: `・${note}`, color: MUTED })),
+      {
+        x: margin.x,
+        y: margin.y + spec.type.heading + 0.03,
+        w: 1 - margin.x * 2,
+        h: 1 - margin.y * 2,
+      },
+    );
+  }
 
   /**
    * 画像が主役の面。帯の高さは本文量で決める（本文が少ない面ほど画像が伸びる）。
