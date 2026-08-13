@@ -127,3 +127,41 @@ export const ADOPTED_LAYOUT: LayoutSpec = {
   dense: { columns: 2, gap: 0.035 },
   type: { title: 0.055, heading: 0.03, body: 0.016, caption: 0.0125 },
 };
+
+/**
+ * スロットの配置幅（判型に対する比率）を版面定義から導く（第8章 8-4）。
+ *
+ * 印刷解像度の判定（第7章 7-2）はここから mm に展開した値で行う。手で並べた定数だと、
+ * 版面を動かしたときに判定だけが古いまま残る。版面が真実の側であることを崩さない。
+ */
+export function slotWidthRatio(slotId: string, spec: LayoutSpec = ADOPTED_LAYOUT): number {
+  const inner =
+    1 - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm;
+  const tile = (cols: number, gap: number): number => (inner - gap * (cols - 1)) / cols;
+
+  switch (slotId) {
+    // 表紙とコンセプトは全面ブリード（余白を取らない）。
+    case 'cover-key':
+    case 'concept-key':
+      return 1;
+    // 画像帯に2枚並ぶ面。
+    case 'brand-mood':
+    case 'works-grid':
+      return (1 - 0.008) / 2;
+    case 'competitor-refs':
+      return (1 - 0.008 * 2) / 3;
+    case 'mood-tiles':
+      return tile(spec.moodboard.cols, spec.moodboard.gap);
+    case 'shot-frames':
+      return tile(spec.shots.perPage, 0.006);
+    case 'cover-logo':
+      return 0.2;
+    default:
+      return tile(3, 0.01);
+  }
+}
+
+/** スロットの配置幅（mm）。判定はこの実寸で行う。 */
+export function slotWidthMm(slotId: string, format: PageFormat = A4_LANDSCAPE): number {
+  return widthToMm(slotWidthRatio(slotId), format);
+}

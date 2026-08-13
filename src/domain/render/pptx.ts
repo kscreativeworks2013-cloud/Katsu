@@ -5,7 +5,24 @@
 
 import PptxGenJS from 'pptxgenjs';
 import type { IRSection, ProposalIR } from '../ir';
+import { ADOPTED_LAYOUT, SCREEN_16_9, safeMargin } from './layout';
 import { assertIrVersion, fileNameFor, isDraft, warningSummary, type Renderer } from './types';
+
+/*
+ * 版面定義（layout.ts）を PowerPoint 側でも参照する（第8章 8-2／8-4）。
+ * pptxgenjs はインチで座標を取るため、比率をインチへ展開する。これで 16:9 は
+ * A4横の版面からの派生になり、面付けを本格的に合わせる段でも定義は1つで済む。
+ * 現時点で共有しているのは判型・安全マージン・文字サイズの段階まで。
+ */
+const PT_PER_INCH = 72;
+const SLIDE_W = SCREEN_16_9.widthPt / PT_PER_INCH;
+const SLIDE_H = SCREEN_16_9.heightPt / PT_PER_INCH;
+const MARGIN = safeMargin(SCREEN_16_9);
+/** 比率 → インチ。 */
+const inchX = (ratio: number): number => ratio * SLIDE_W;
+const inchY = (ratio: number): number => ratio * SLIDE_H;
+/** 文字サイズ（ページ高さ比 → pt）。 */
+const pt = (ratio: number): number => Math.round(ratio * SCREEN_16_9.heightPt);
 
 const FONT_JA = 'Yu Gothic';
 const INK = '12100E';
@@ -29,11 +46,11 @@ async function toBytes(output: unknown): Promise<Uint8Array> {
 function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
   const slide = pptx.addSlide();
   slide.addText(section.title, {
-    x: 0.6,
-    y: 0.4,
-    w: 8.8,
+    x: inchX(MARGIN.x),
+    y: inchY(MARGIN.y),
+    w: inchX(1 - MARGIN.x * 2),
     h: 0.6,
-    fontSize: 24,
+    fontSize: pt(ADOPTED_LAYOUT.type.heading),
     fontFace: FONT_JA,
     color: INK,
   });
@@ -48,11 +65,11 @@ function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
 
   if (texts.length > 0) {
     slide.addText(texts.join('\n'), {
-      x: 0.6,
+      x: inchX(MARGIN.x),
       y: 1.2,
-      w: images.length > 0 ? 5.2 : 8.8,
+      w: images.length > 0 ? inchX(0.58) : inchX(1 - MARGIN.x * 2),
       h: 3.6,
-      fontSize: 12,
+      fontSize: pt(ADOPTED_LAYOUT.type.body),
       fontFace: FONT_JA,
       color: INK,
       lineSpacingMultiple: 1.3,
@@ -79,9 +96,9 @@ function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
   );
   if (captions.length > 0) {
     slide.addText(captions.join(' ／ '), {
-      x: 0.6,
+      x: inchX(MARGIN.x),
       y: 4.9,
-      w: 8.8,
+      w: inchX(1 - MARGIN.x * 2),
       h: 0.4,
       fontSize: 9,
       fontFace: FONT_JA,
@@ -116,7 +133,15 @@ export const pptxRenderer: Renderer = {
       ja
         ? `${ir.project.brand}／${ir.project.client}`
         : `${ir.project.brand} / ${ir.project.client}`,
-      { x: 0.6, y: 2.9, w: 8.8, h: 0.5, fontSize: 14, fontFace: FONT_JA, color: CHAMPAGNE },
+      {
+        x: inchX(MARGIN.x),
+        y: 2.9,
+        w: inchX(1 - MARGIN.x * 2),
+        h: 0.5,
+        fontSize: pt(ADOPTED_LAYOUT.type.heading * 0.8),
+        fontFace: FONT_JA,
+        color: CHAMPAGNE,
+      },
     );
     cover.addText(`${ir.builtAt.slice(0, 10)}　${ja ? '版' : 'revision'} ${ir.revision}`, {
       x: 0.6,
@@ -131,9 +156,9 @@ export const pptxRenderer: Renderer = {
     const warnings = warningSummary(ir);
     if (warnings.length > 0) {
       cover.addText([ja ? '出力時の注意' : 'Notes at export time', ...warnings].join('\n'), {
-        x: 0.6,
+        x: inchX(MARGIN.x),
         y: 4.0,
-        w: 8.8,
+        w: inchX(1 - MARGIN.x * 2),
         h: 1.0,
         fontSize: 9,
         fontFace: FONT_JA,

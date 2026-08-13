@@ -16,6 +16,7 @@ import type {
   Workspace,
 } from '../data/types';
 import { effectivePpi, pickVariant, requiredPixels, resolveAsset } from './assets';
+import { slotWidthMm } from './render/layout';
 import { PROPOSAL_TEMPLATE, resolveSlot } from './proposal';
 import { metaFor } from './provenance';
 
@@ -219,13 +220,15 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
       }
 
       // 原寸はあるが、このスロットの配置幅に対して足りない（第7章 7-2／7-3）。
-      const needed = requiredPixels(slot.printWidthMm);
+      // 配置幅は版面定義から導く（第8章 8-4）。定数を手で並べると版面と判定がずれる。
+      const printWidthMm = slotWidthMm(slot.id);
+      const needed = requiredPixels(printWidthMm);
       if (original && original.width > 0 && original.width < needed) {
         warnings.push({
           kind: 'low-resolution',
           severity: 'warn',
           sectionId,
-          message: `${image.caption}（${slot.label}）は印刷解像度が不足しています：${effectivePpi(original.width, slot.printWidthMm)}ppi（配置幅${slot.printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
+          message: `${image.caption}（${slot.label}）は印刷解像度が不足しています：${effectivePpi(original.width, printWidthMm)}ppi（配置幅${printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
         });
       }
 
@@ -234,7 +237,7 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
         caption: image.caption,
         slotId: slot.id,
         slotLabel: slot.label,
-        printWidthMm: slot.printWidthMm,
+        printWidthMm,
         assetId: asset?.id,
         assetOrigin: asset?.origin,
         variant: original && {

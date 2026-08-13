@@ -94,8 +94,9 @@ describe('PDF レンダラ', () => {
     expect(head.startsWith('%PDF-')).toBe(true);
     expect(file.bytes.length).toBeGreaterThan(5000);
     expect(file.fileName).toBe(`MAISON_LUMIÈRE_Proposal_JA_${ir.revision}.pdf`);
-    // サブセット埋め込みなので、フォント実体（5MB超）より十分小さい。
-    expect(file.bytes.length).toBeLessThan(2_000_000);
+    // 和文フォントは全字形を埋め込む（サブセット化は壊れた glyf を吐く。第8章 8-5）。
+    // そのぶん1本あたり約3MB増える。上限はフォント実体（5.4MB）＋本文の範囲に置く。
+    expect(file.bytes.length).toBeLessThan(8_000_000);
   }, 60_000);
 
   it('は画像を埋め込める', async () => {

@@ -38,6 +38,13 @@ const INK = rgb(0.07, 0.06, 0.05);
 const MUTED = rgb(0.54, 0.51, 0.47);
 const CHAMPAGNE = rgb(0.7, 0.58, 0.42);
 const PAPER = rgb(0.98, 0.97, 0.95);
+/**
+ * タイル面の台紙（第8章 8-5）。紙色より1〜2段暗いグレージュ。
+ * 白背景の素材は輪郭が立ち、暗い素材は逆に浮く。罫線を引くと素材ごとに
+ * 処理が変わる版面になり、紙色そのものを落とすと素材1点のために全体の
+ * トーンを動かすことになるため、台紙だけを敷く。
+ */
+const MAT = rgb(0.9, 0.885, 0.86);
 
 /**
  * 縦にはみ出した分を、どれだけ下側から切るか（0.5=中央基準、1.0=上端を全部残す）。
@@ -620,6 +627,18 @@ export async function renderLayoutPdf(
       );
 
       const area: Rect = { x: margin.x, y: head, w: 1 - margin.x * 2, h: 1 - head - margin.y };
+      // タイル領域だけに台紙を敷く。ページ全体の紙色は変えない。
+      const bleedX = margin.x * 0.45;
+      const bleedY = margin.y * 0.45;
+      page.fill(
+        {
+          x: area.x - bleedX,
+          y: area.y - bleedY,
+          w: area.w + bleedX * 2,
+          h: area.h + bleedY * 2,
+        },
+        MAT,
+      );
       const onPage = Math.min(perPage, blocks.length - start);
       // 残数で列と行を組み直す（例：残り2枚なら1行2列の大判にする）。
       const usedCols = Math.min(cols, onPage);
