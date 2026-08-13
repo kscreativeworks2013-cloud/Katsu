@@ -16,6 +16,8 @@ import type {
 } from '../data/types';
 
 const STORAGE_KEY = 'lbvpos.state';
+/** v2 のペイロードの退避先。移送を確認できるまで消さない（第7章 7-12）。 */
+const BACKUP_KEY = 'lbvpos.state.v2-backup';
 // v2: StepStatus に review、StepRecord に確認済み、assets を追加。
 // v3: Asset.thumbnail（data URI）を廃し、実体を AssetBinaryStore へ出して variants を持つ。
 const SCHEMA_VERSION = 3;
@@ -52,10 +54,12 @@ export interface LoadedState {
    * 起動時に AssetBinaryStore へ移し、preview の variant にする（第7章 7-12）。
    */
   legacyThumbnails: Record<string, string>;
+  /** バックアップを確保できたか。false のときは v3 の保存を先に行ってはいけない。 */
+  backedUp: boolean;
 }
 
 /** v2 の状態を v3 の形に読み替える。実体の移送は呼び出し側（非同期）で行う。 */
-function migrateFromV2(parsed: LegacyState): LoadedState {
+function migrateFromV2(parsed: LegacyState): Omit<LoadedState, 'backedUp'> {
   const legacyThumbnails: Record<string, string> = {};
   const assets: Record<string, Asset> = {};
 
@@ -69,7 +73,47 @@ function migrateFromV2(parsed: LegacyState): LoadedState {
 }
 
 /**
+ * v2 のペイロードを退避する（第7章 7-12）。
+ * 移送の成功が確認できるまで元の画像を捨てないための保険で、告知の代わりではない。
+ */
+function backupLegacy(raw: string): boolean {
+  const store = storage();
+  if (!store) return false;
+  try {
+    store.setItem(BACKUP_KEY, raw);
+    return true;
+  } catch {
+    // 退避する空きが無い。呼び出し側は v3 の保存を保留し、原本を残したままにする。
+    return false;
+  }
+}
+
+/** 退避したサムネイル。移送しきれなかった分の再試行に使う。 */
+function readLegacyBackup(): Record<string, string> {
+  const store = storage();
+  if (!store) return {};
+  try {
+    const raw = store.getItem(BACKUP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as LegacyState;
+    return Object.fromEntries(
+      Object.entries(parsed.assets ?? {})
+        .filter(([, asset]) => asset.thumbnail)
+        .map(([id, asset]) => [id, asset.thumbnail as string]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/** 移送を全件確認できたときだけ呼ぶ。ここで初めて旧データを手放す。 */
+export function clearLegacyBackup(): void {
+  storage()?.removeItem(BACKUP_KEY);
+}
+
+/**
  * 保存済みの状態を読む。v2 は移行して読み、それ以外の版差は捨てる。
+ * v3 でも退避が残っていれば、前回移送しきれなかった分として持ち越す。
  */
 export function loadState(): LoadedState | null {
   const store = storage();
@@ -80,9 +124,14 @@ export function loadState(): LoadedState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PersistedState;
     if (!Array.isArray(parsed.projects)) return null;
-    if (parsed.version === 2) return migrateFromV2(parsed as unknown as LegacyState);
+
+    if (parsed.version === 2) {
+      // 退避を先に取る。取れなければ backedUp=false を返し、保存の保留で原本を守る。
+      const backedUp = backupLegacy(raw);
+      return { ...migrateFromV2(parsed as unknown as LegacyState), backedUp };
+    }
     if (parsed.version !== SCHEMA_VERSION) return null;
-    return { state: parsed, legacyThumbnails: {} };
+    return { state: parsed, legacyThumbnails: readLegacyBackup(), backedUp: true };
   } catch {
     return null;
   }

@@ -52,6 +52,137 @@ function makePng(width: number, height: number): Buffer {
   ]);
 }
 
+/** 1×1 の JPEG（data URI）。v2 のサムネイルを模す。 */
+const LEGACY_THUMBNAIL =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+
+/** v2 のペイロードを localStorage に置く。移行の入口を実データで踏む。 */
+function legacyState(thumbnail: string): string {
+  return JSON.stringify({
+    version: 2,
+    projects: [],
+    workspaces: {},
+    provenance: {},
+    runs: [],
+    portfolio: [],
+    assets: {
+      'ast-legacy': {
+        id: 'ast-legacy',
+        origin: 'upload',
+        label: '旧サムネイル',
+        source: 'legacy.jpg',
+        runId: null,
+        mimeType: 'image/jpeg',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        thumbnail,
+      },
+    },
+  });
+}
+
+test.describe('v2 からの移行', () => {
+  test('は旧サムネイルを実体ストアへ移し、退避を片付ける', async ({ page }) => {
+    await page.addInitScript(([key, payload]) => localStorage.setItem(key, payload), [
+      'lbvpos.state',
+      legacyState(LEGACY_THUMBNAIL),
+    ] as const);
+
+    await page.goto('/settings');
+
+    await expect(page.getByText(/1件を移しました/)).toBeVisible();
+    await expect(page.getByText(/表示用のみ 1件/)).toBeVisible();
+    // 全件移せたので退避は消える。ここで初めて旧データを手放す。
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem('lbvpos.state.v2-backup')))
+      .toBeNull();
+  });
+
+  test('は移せなかった画像を退避したまま残す（保存で上書きしない）', async ({ page }) => {
+    // 壊れたペイロード（data URI として読めない）＝移送できない画像。
+    await page.addInitScript(([key, payload]) => localStorage.setItem(key, payload), [
+      'lbvpos.state',
+      legacyState('not-a-data-uri'),
+    ] as const);
+
+    await page.goto('/settings');
+
+    await expect(page.getByText(/1件は移行できませんでした/)).toBeVisible();
+    // 退避は残す。告知だけで終わらせず、次回起動で再試行できる状態にしておく。
+    const backup = await page.evaluate(() => localStorage.getItem('lbvpos.state.v2-backup'));
+    expect(backup).toContain('not-a-data-uri');
+  });
+});
+
+test.describe('保存できないとき', () => {
+  test('は理由を出し、成果物に使えないことを示す', async ({ page }) => {
+    // 端末の空き容量が尽きた状態を作る（IndexedDB の書き込みだけを失敗させる）。
+    await page.addInitScript(() => {
+      IDBObjectStore.prototype.put = () => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      };
+    });
+
+    await page.goto('/portfolio');
+    const work = page.getByRole('figure').first();
+    const title = (await work.getByRole('heading', { level: 4 }).innerText()).trim();
+
+    await work.getByRole('button', { name: `${title}に画像を登録` }).click();
+    await page
+      .getByLabel(`${title}の画像ファイル`)
+      .setInputFiles({ name: 'key.png', mimeType: 'image/png', buffer: makePng(600, 400) });
+
+    await expect(work.getByText(/空き容量が足りず/)).toBeVisible();
+    await expect(work.getByText('出力に使えません')).toBeVisible();
+  });
+});
+
+test.describe('実体の消失', () => {
+  test('は検出して画面に出し、貼り直しで復旧できる', async ({ page }) => {
+    await page.goto('/portfolio');
+    const work = page.getByRole('figure').first();
+    const title = (await work.getByRole('heading', { level: 4 }).innerText()).trim();
+
+    await work.getByRole('button', { name: `${title}に画像を登録` }).click();
+    await page
+      .getByLabel(`${title}の画像ファイル`)
+      .setInputFiles({ name: 'key.png', mimeType: 'image/png', buffer: makePng(900, 600) });
+    await expect(work.getByRole('img', { name: title })).toBeVisible();
+
+    // ブラウザが保存領域を破棄した状態を作る（メタデータは残り、実体だけ消える）。
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('lbvpos.assets', 1);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result;
+            const tx = db.transaction('binaries', 'readwrite');
+            tx.objectStore('binaries').clear();
+            tx.oncomplete = () => {
+              db.close();
+              resolve(null);
+            };
+            tx.onerror = () => reject(tx.error);
+          };
+        }),
+    );
+    await page.reload();
+
+    // 黙って空欄にせず、失われたことと復旧の手段を出す。
+    await expect(page.getByRole('alert')).toContainText(/画像 1件が.*失われています/);
+    const restored = page.getByRole('figure').first();
+    await expect(restored.getByText('画像が失われています')).toBeVisible();
+
+    await restored.getByRole('button', { name: '画像を貼り直す', exact: true }).click();
+    await page
+      .getByLabel(`${title}の画像を貼り直す`)
+      .setInputFiles({ name: 'again.png', mimeType: 'image/png', buffer: makePng(900, 600) });
+
+    await expect(restored.getByText('画像が失われています')).toBeHidden();
+    await expect(page.getByRole('alert')).toBeHidden();
+  });
+});
+
 test.describe('原寸アセット', () => {
   test('は登録した画像をリロード後も保持し、原寸のまま PDF に入れる', async ({ page }) => {
     const png = makePng(1800, 1200);

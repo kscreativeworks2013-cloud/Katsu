@@ -41,7 +41,7 @@ import {
   type NewProjectInput,
   type PendingRun,
 } from './context';
-import { loadState, saveState, type SaveOutcome } from './persistence';
+import { clearLegacyBackup, loadState, saveState, type SaveOutcome } from './persistence';
 
 const EMPTY_CREATIVE: Project['creative'] = {
   worldview: '',
@@ -124,6 +124,14 @@ export function AppStoreProvider({
   const [migration, setMigration] = useState<{ moved: number; failed: number } | undefined>(
     undefined,
   );
+  /**
+   * v2 の実体を移送し終えるまで v3 の保存を止める（第7章 7-12）。
+   * 先に v3 を書くと、その時点で旧サムネイルが localStorage から消え、
+   * 移送に失敗した画像は復旧できなくなる。移送の確認が先、保存は後。
+   */
+  const [migrationSettled, setMigrationSettled] = useState(
+    Object.keys(loaded?.legacyThumbnails ?? {}).length === 0,
+  );
 
   const markMissingKey = useCallback((key: string) => {
     // キーは `${assetId}:${kind}`。実体が取れないことが消失の観測点（第7章 7-11）。
@@ -161,6 +169,9 @@ export function AppStoreProvider({
   });
 
   useEffect(() => {
+    // 移送の決着前は書かない。書けば旧サムネイルを失う（第7章 7-12）。
+    if (!migrationSettled) return;
+
     // 書き込み自体は同期。状態変化のたびに確実に保存する。
     const outcome = saveState({
       projects,
@@ -177,7 +188,7 @@ export function AppStoreProvider({
       reportedStatus.current = outcome.status;
       queueMicrotask(() => setSaveOutcome(outcome));
     }
-  }, [projects, workspaces, provenance, runs, assets, portfolio, settings]);
+  }, [projects, workspaces, provenance, runs, assets, portfolio, settings, migrationSettled]);
 
   const refreshUsage = useCallback(() => {
     void store.usage().then((usage) => setQuotaBytes(usage.quotaBytes));
@@ -196,11 +207,15 @@ export function AppStoreProvider({
       if (!active) return;
       setPersistState(persist);
 
-      const legacy = loaded?.legacyThumbnails ?? {};
+      const stored = persisted?.assets ?? {};
+      const legacy = Object.entries(loaded?.legacyThumbnails ?? {}).filter(
+        // 既に variant を持つものは移送済み。退避からの再試行で二重に書かない。
+        ([assetId]) => (stored[assetId]?.variants.length ?? 0) === 0,
+      );
       const migrated: Record<string, AssetVariant> = {};
       let failed = 0;
 
-      for (const [assetId, dataUri] of Object.entries(legacy)) {
+      for (const [assetId, dataUri] of legacy) {
         const blob = dataUriToBlob(dataUri);
         // 既存サムネイルは preview 規格（長辺800px・JPEG）と一致するので作り直さない。
         const key = variantKey(assetId, 'preview');
@@ -224,13 +239,19 @@ export function AppStoreProvider({
 
       const moved = Object.keys(migrated).length;
       const withVariants: Record<string, Asset> = Object.fromEntries(
-        Object.entries(persisted?.assets ?? {}).map(([id, asset]) => [
+        Object.entries(stored).map(([id, asset]) => [
           id,
           migrated[id] ? { ...asset, variants: [migrated[id]] } : asset,
         ]),
       );
       if (moved > 0) setAssets(withVariants);
       if (moved > 0 || failed > 0) setMigration({ moved, failed });
+
+      // 全件の移送を確認できたときだけ退避を捨てる。失敗が残る間は保持し、
+      // 次回起動でも再試行できるようにする（告知だけでは復旧にならない）。
+      if (failed === 0) clearLegacyBackup();
+      // 退避を取れなかった場合は v3 を書かない。原本（v2）をそのまま残す方が安全。
+      setMigrationSettled(failed === 0 || loaded?.backedUp === true);
 
       // メタデータと実体の突き合わせ。記述子があるのに実体が無いものが消失。
       const keys = await store.list();

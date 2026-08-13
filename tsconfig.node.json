@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    // e2e はブラウザ内で評価するコード（page.evaluate／addInitScript）を含むため DOM を要する。
+    // 実行環境は Node だが、これらの関数本体だけはブラウザで動く。
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["node"],
