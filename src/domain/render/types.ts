@@ -66,3 +66,35 @@ export function warningSummary(ir: ProposalIR): string[] {
     ),
   ];
 }
+
+/**
+ * 提出前チェック（第6章 6-4、第8章 8-7）。
+ *
+ * info 級の警告は出力を壊さない。壊さないから warn にはしないが、
+ * 「画像未登録が6件のまま出した」ことは提出前に見えていなければならない。
+ * 個票は画面に出ているので、成果物には**件数**を残す（面を注意書きで埋めない）。
+ */
+export function checklistSummary(ir: ProposalIR): string[] {
+  const info = ir.warnings.filter((warning) => warning.severity === 'info');
+  const titles = new Map(ir.sections.map((section) => [section.id, section.title]));
+
+  const missing = info.filter((warning) => warning.kind === 'missing-image');
+  const perSection = new Map<string, number>();
+  for (const warning of missing) {
+    const title = titles.get(warning.sectionId ?? '') ?? warning.sectionId ?? '章外';
+    perSection.set(title, (perSection.get(title) ?? 0) + 1);
+  }
+
+  const lines = [
+    ...new Set(info.filter((w) => w.kind !== 'missing-image').map((w) => w.message)),
+  ];
+  if (missing.length === 0) return lines;
+
+  const breakdown = [...perSection.entries()]
+    .map(([title, count]) => `${title}${count}`)
+    .join('、');
+  return [
+    `画像未登録が${missing.length}件あります（${breakdown}）。登録した分だけ差し替わります。`,
+    ...lines,
+  ];
+}

@@ -227,6 +227,16 @@ export interface Shot {
   assetId?: string | null;
 }
 
+/**
+ * 切り出し位置（第8章 8-7）。画像のどの点を枠の中心に置くかを 0..1 で持つ。
+ * 枠に対して余る側だけが動くので、指定しても被写体が枠から出ることはない。
+ * 同じ画像でも枠の縦横比ごとに残したい部分が違うため、アセットではなくスロット単位で持つ。
+ */
+export interface CropFocus {
+  x: number;
+  y: number;
+}
+
 /** 章本文。日英を同一の構成データから導出する（第5章 5-2）。 */
 export interface ProposalBody {
   ja: string[];
@@ -275,6 +285,11 @@ export interface Workspace {
    * 章単位で手動編集・保護できる。旧スキーマの保存状態には無いため任意。
    */
   proposalBody?: Partial<Record<string, ProposalBody>>;
+  /**
+   * スロットに置いた画像の切り出し位置（第8章 8-7）。キーは解決済み画像のキー
+   * （`<スロットID>-<項目ID>`）。生成物ではなく利用者の指定なので provenance では扱わない。
+   */
+  crops?: Record<string, CropFocus>;
   exports: ExportRecord[];
 }
 

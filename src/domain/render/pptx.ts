@@ -25,9 +25,19 @@ const inchY = (ratio: number): number => ratio * SLIDE_H;
 const pt = (ratio: number): number => Math.round(ratio * SCREEN_16_9.heightPt);
 
 const FONT_JA = 'Yu Gothic';
-const INK = '12100E';
-const MUTED = '8A8279';
-const CHAMPAGNE = 'B3936A';
+
+/**
+ * 版面色は IR の theme（ブランドのパレットからの導出）から採る（第8章 8-7）。
+ * PDF と同じ源から採ることで、テンプレートを差し替えたときに片方の形式だけが
+ * 前の色のまま残ることがなくなる。pptxgenjs は「#」の無い16進を取る。
+ */
+type Ink = { ink: string; muted: string; accent: string; paper: string };
+const inkOf = (ir: ProposalIR): Ink => ({
+  ink: ir.theme.ink.replace('#', ''),
+  muted: ir.theme.muted.replace('#', ''),
+  accent: ir.theme.accent.replace('#', ''),
+  paper: ir.theme.paper.replace('#', ''),
+});
 
 /** pptxgenjs は data URI の "data:" を含まない形を期待する。 */
 function toPptxData(dataUri: string): string {
@@ -43,8 +53,9 @@ async function toBytes(output: unknown): Promise<Uint8Array> {
   throw new Error('PowerPoint の生成結果を解釈できませんでした');
 }
 
-function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
+function addSectionSlide(pptx: PptxGenJS, section: IRSection, color: Ink): void {
   const slide = pptx.addSlide();
+  slide.background = { color: color.paper };
   slide.addText(section.title, {
     x: inchX(MARGIN.x),
     y: inchY(MARGIN.y),
@@ -52,7 +63,7 @@ function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
     h: 0.6,
     fontSize: pt(ADOPTED_LAYOUT.type.heading),
     fontFace: FONT_JA,
-    color: INK,
+    color: color.ink,
   });
 
   const texts: string[] = [];
@@ -71,7 +82,7 @@ function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
       h: 3.6,
       fontSize: pt(ADOPTED_LAYOUT.type.body),
       fontFace: FONT_JA,
-      color: INK,
+      color: color.ink,
       lineSpacingMultiple: 1.3,
       valign: 'top',
     });
@@ -102,7 +113,7 @@ function addSectionSlide(pptx: PptxGenJS, section: IRSection): void {
       h: 0.4,
       fontSize: 9,
       fontFace: FONT_JA,
-      color: MUTED,
+      color: color.muted,
     });
   }
 }
@@ -114,12 +125,14 @@ export const pptxRenderer: Renderer = {
     assertIrVersion(pptxRenderer, ir);
     const ja = ir.lang === 'ja';
 
+    const color = inkOf(ir);
     const pptx = new PptxGenJS();
     pptx.layout = 'LAYOUT_16x9';
     pptx.author = ir.project.brand;
     pptx.title = ir.project.name;
 
     const cover = pptx.addSlide();
+    cover.background = { color: color.paper };
     cover.addText(ir.project.name, {
       x: 0.6,
       y: 1.8,
@@ -127,7 +140,7 @@ export const pptxRenderer: Renderer = {
       h: 1,
       fontSize: 32,
       fontFace: FONT_JA,
-      color: INK,
+      color: color.ink,
     });
     cover.addText(
       ja
@@ -140,7 +153,7 @@ export const pptxRenderer: Renderer = {
         h: 0.5,
         fontSize: pt(ADOPTED_LAYOUT.type.heading * 0.8),
         fontFace: FONT_JA,
-        color: CHAMPAGNE,
+        color: color.accent,
       },
     );
     cover.addText(`${ir.builtAt.slice(0, 10)}　${ja ? '版' : 'revision'} ${ir.revision}`, {
@@ -150,7 +163,7 @@ export const pptxRenderer: Renderer = {
       h: 0.4,
       fontSize: 10,
       fontFace: FONT_JA,
-      color: MUTED,
+      color: color.muted,
     });
 
     const warnings = warningSummary(ir);
@@ -162,13 +175,13 @@ export const pptxRenderer: Renderer = {
         h: 1.0,
         fontSize: 9,
         fontFace: FONT_JA,
-        color: MUTED,
+        color: color.muted,
       });
     }
 
     for (const section of ir.sections) {
       if (section.id === 'cover') continue;
-      addSectionSlide(pptx, section);
+      addSectionSlide(pptx, section, color);
     }
 
     const output = await pptx.write({ outputType: 'arraybuffer' });

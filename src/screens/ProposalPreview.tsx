@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import type { ProposalBody } from '../data/types';
+import type { CropFocus, ProposalBody } from '../data/types';
 import { ASSET_ORIGIN_LABEL } from '../domain/assets';
 import type { Lang } from '../domain/ir';
 import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/proposal';
@@ -67,18 +67,69 @@ function SectionBody({
 }
 
 /**
+ * 切り出し位置（第8章 8-7）。同じ画像でも枠の縦横比はスロットごとに違うので、
+ * 指定はアセットではなくスロット単位で持つ。既定は上寄せ（人物の頭を落とさないため）。
+ */
+const FOCUS_OPTIONS: { label: string; value: string }[] = [
+  { label: '自動（上寄せ）', value: '' },
+  { label: '左上', value: '0,0' },
+  { label: '中央上', value: '0.5,0' },
+  { label: '右上', value: '1,0' },
+  { label: '左', value: '0,0.5' },
+  { label: '中央', value: '0.5,0.5' },
+  { label: '右', value: '1,0.5' },
+  { label: '左下', value: '0,1' },
+  { label: '中央下', value: '0.5,1' },
+  { label: '右下', value: '1,1' },
+];
+
+function CropFocusPicker({
+  imageKey,
+  focus,
+  onChange,
+}: {
+  imageKey: string;
+  focus: CropFocus | undefined;
+  onChange: (focus: CropFocus | null) => void;
+}) {
+  return (
+    <label className="row" style={{ gap: 6, marginTop: 4 }}>
+      <span className="muted">切り出し</span>
+      <select
+        value={focus ? `${focus.x},${focus.y}` : ''}
+        aria-label={`${imageKey}の切り出し位置`}
+        onChange={(event) => {
+          const [x, y] = event.target.value.split(',').map(Number);
+          onChange(event.target.value === '' ? null : { x, y });
+        }}
+      >
+        {FOCUS_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/**
  * 章の画像スロット（第5章 5-2）。アセット未登録・サムネイル退避時は
  * グラデーションやプレースホルダにフォールバックし、参照切れで壊れない。
  */
 function SectionSlots({
   section,
   slots,
+  crops,
+  onCrop,
 }: {
   section: ProposalSection;
   slots: {
     slot: ProposalSection['imageSlots'][number];
     images: ReturnType<typeof resolveSlot>;
   }[];
+  crops: Record<string, CropFocus>;
+  onCrop: (key: string, focus: CropFocus | null) => void;
 }) {
   if (section.imageSlots.length === 0) return null;
   return (
@@ -102,7 +153,14 @@ function SectionSlots({
                   <figcaption className="tile-body">
                     <p>{image.caption}</p>
                     {image.asset && (
-                      <p className="muted">{ASSET_ORIGIN_LABEL[image.asset.origin]}</p>
+                      <>
+                        <p className="muted">{ASSET_ORIGIN_LABEL[image.asset.origin]}</p>
+                        <CropFocusPicker
+                          imageKey={image.key}
+                          focus={crops[image.key]}
+                          onChange={(focus) => onCrop(image.key, focus)}
+                        />
+                      </>
                     )}
                   </figcaption>
                 </figure>
@@ -120,7 +178,14 @@ export function ProposalPreviewScreen() {
   const { projectId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField, portfolio, assets, provenance: allProvenance } = useAppStore();
+  const {
+    requestRun,
+    editField,
+    setCropFocus,
+    portfolio,
+    assets,
+    provenance: allProvenance,
+  } = useAppStore();
   const pending = usePendingRun(projectId, 'proposal');
   const busy = pending?.status === 'running';
 
@@ -226,7 +291,12 @@ export function ProposalPreviewScreen() {
                         }
                       />
                     )}
-                    <SectionSlots section={section} slots={slots} />
+                    <SectionSlots
+                      section={section}
+                      slots={slots}
+                      crops={workspace.crops ?? {}}
+                      onCrop={(key, focus) => setCropFocus(projectId, key, focus)}
+                    />
                   </>
                 )}
               </article>

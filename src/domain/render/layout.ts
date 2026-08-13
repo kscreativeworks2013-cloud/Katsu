@@ -102,8 +102,12 @@ export interface LayoutSpec {
   band: { min: number; max: number };
   /** ムードボードのタイル配置。最終ページは残数に応じて再配分する。 */
   moodboard: { cols: number; rows: number; gap: number };
-  /** ショットリストのフィルムストリップ。 */
-  shots: { perPage: number; strip: number };
+  /**
+   * ショットリストのフィルムストリップ。枠幅は常に perPage 分割で、枚数では変えない。
+   * 面に入る段数は rows まで（残りが1段に満たない面を作らない）。
+   * 帯の高さは仕様の量に応じて strip の範囲で伸縮する。
+   */
+  shots: { perPage: number; rows: number; strip: { min: number; max: number } };
   /** dense 面の段組み。テキストだけの章は1段＝1章として詰める。 */
   dense: { columns: number; gap: number };
   /** 文字サイズ（ページ高さに対する比率）。 */
@@ -123,9 +127,10 @@ export const ADOPTED_LAYOUT: LayoutSpec = {
     '表紙は画像＋クリーム地。前半は画像が面を支配し、見出しとキャプション（出自つき）は必ず残す。後半は2段組の密度でまとめ、ショットリストはフィルムストリップにカット別仕様を併記する。',
   band: { min: 0.4, max: 0.74 },
   moodboard: { cols: 3, rows: 2, gap: 0.01 },
-  shots: { perPage: 4, strip: 0.4 },
+  shots: { perPage: 4, rows: 2, strip: { min: 0.4, max: 0.56 } },
   dense: { columns: 2, gap: 0.035 },
-  type: { title: 0.055, heading: 0.03, body: 0.016, caption: 0.0125 },
+  // 本文は2段組の測度（片段で約33字）に対して決める。小さすぎると提案書として読めない。
+  type: { title: 0.055, heading: 0.03, body: 0.0185, caption: 0.0125 },
 };
 
 /**
@@ -164,4 +169,44 @@ export function slotWidthRatio(slotId: string, spec: LayoutSpec = ADOPTED_LAYOUT
 /** スロットの配置幅（mm）。判定はこの実寸で行う。 */
 export function slotWidthMm(slotId: string, format: PageFormat = A4_LANDSCAPE): number {
   return widthToMm(slotWidthRatio(slotId), format);
+}
+
+export interface TileGridOptions {
+  /** 1行に並べる最大枚数。枚数がこれを下回る面では、その枚数が列数になる。 */
+  cols: number;
+  /** タイル間の隙間（幅比率）。行間にも同じ値を使う。 */
+  gap: number;
+  /** 枠の縦横比（横/縦）の上限。超えて横に伸ばすと縦位置の人物が帯になる。 */
+  maxAspect: number;
+  /** 枠のうちキャプションに残す高さ（高さ比率）。縦横比は画像部分で判定する。 */
+  captionRatio: number;
+  format: PageFormat;
+}
+
+/**
+ * タイル面の格子（第8章 8-6）。
+ *
+ * **列グリッドと左端は面の中で一定に保つ。** 残数に応じて変えてよいのは面全体の列数だけで、
+ * 半端な行だけを広げたり中央に寄せたりしない（上段と下段で幅も左端も違う面になる）。
+ * 枚数が列数を下回る面では、その枚数を列数として組み直す（2枚だけの面を作らない）。
+ */
+export function tileGrid(count: number, area: Rect, options: TileGridOptions): Rect[] {
+  const { cols, gap, maxAspect, captionRatio, format } = options;
+  const usedCols = Math.max(1, Math.min(cols, count));
+  const usedRows = Math.max(1, Math.ceil(count / usedCols));
+
+  const cellH = (area.h - gap * (usedRows - 1)) / usedRows;
+  // 縦横比の上限は画像部分（キャプションを除いた高さ）で見る。比率は判型で実寸に直す。
+  const capped = ((cellH - captionRatio) * maxAspect * format.heightPt) / format.widthPt;
+  const cellW = Math.min((area.w - gap * (usedCols - 1)) / usedCols, capped);
+
+  return Array.from({ length: count }, (_, index) => {
+    const row = Math.floor(index / usedCols);
+    return {
+      x: area.x + (index - row * usedCols) * (cellW + gap),
+      y: area.y + row * (cellH + gap),
+      w: cellW,
+      h: cellH,
+    };
+  });
 }

@@ -151,8 +151,15 @@ const TONES: [number, number, number][][] = [
   ],
 ];
 
-/** 全スロットにアセットを結びつけた案件データ。版面の比較には画像が要る。 */
-function projectWithImages(): { workspace: Workspace; assets: Record<string, Asset> } {
+/**
+ * 全スロットにアセットを結びつけた案件データ。版面の比較には画像が要る。
+ * fill を渡すと、素材を複製してムードボード・ショットリストをその枚数まで埋める
+ * （再配分ロジックを 3+3 と 3+2 の両方で確かめるため）。
+ */
+function projectWithImages(fill?: { tiles: number; cuts: number }): {
+  workspace: Workspace;
+  assets: Record<string, Asset>;
+} {
   const project = seedProjects[0];
   const base = seedWorkspaces[project.id];
   const assets: Record<string, Asset> = {};
@@ -193,8 +200,13 @@ function projectWithImages(): { workspace: Workspace; assets: Record<string, Ass
     // ムードボード（先頭は表紙のキービジュアルにもなる）。素材の無いタイルは落とす。
     const forShots = real.filter((photo) => photo.name.includes('shot'));
     const forMood = real.filter((photo) => !photo.name.includes('shot'));
+    /** 枚数を指定数まで複製で埋める（既存アセットの複製で再配分を確かめる）。 */
+    const pad = <T>(list: T[], count?: number): T[] =>
+      count === undefined || list.length === 0
+        ? list
+        : Array.from({ length: count }, (_, index) => list[index % list.length]);
 
-    const moodboard = forMood.map((photo, index) => {
+    const moodboard = pad(forMood, fill?.tiles).map((photo, index) => {
       const id = `ast-mood-${index}`;
       register(id, index, photo, photo.dataUri);
       return {
@@ -203,7 +215,7 @@ function projectWithImages(): { workspace: Workspace; assets: Record<string, Ass
         assetId: id,
       };
     });
-    const shots = forShots.map((photo, index) => {
+    const shots = pad(forShots, fill?.cuts).map((photo, index) => {
       const id = `ast-shot-${index}`;
       register(id, index, photo, photo.dataUri);
       return { ...base.shots[index % base.shots.length], id: `shot-${index}`, assetId: id };
@@ -215,6 +227,9 @@ function projectWithImages(): { workspace: Workspace; assets: Record<string, Ass
         proposalBody: generateProposalBody(project, base, seedPortfolio, defaultSettings),
         moodboard,
         shots,
+        // 表紙は 3:2 の横位置を帯へ流すため、既定の上寄せでも帽子の天面が切れる。
+        // スロット単位の切り出し指定（第8章 8-7）で上端を残す。
+        crops: { 'cover-key-mood-0': { x: 0.5, y: 0 } },
       },
       assets,
     };
@@ -262,29 +277,39 @@ function inject(ir: ProposalIR): ProposalIR {
   };
 }
 
+async function write(name: string, fill?: { tiles: number; cuts: number }): Promise<void> {
+  const project = seedProjects[0];
+  const { workspace, assets } = projectWithImages(fill);
+  const fontBytes = loadTestFont();
+
+  const ir = inject(
+    buildProposalIR({
+      project,
+      workspace,
+      provenance: {},
+      portfolio: seedPortfolio,
+      assets,
+      lang: 'ja',
+      builtAt: new Date('2026-08-13T00:00:00.000Z'),
+    }),
+  );
+
+  mkdirSync(OUT_DIR, { recursive: true });
+  const bytes = await renderLayoutPdf(ir, { fontBytes });
+  const path = `${OUT_DIR}/${name}.pdf`;
+  writeFileSync(path, bytes);
+  expect(bytes.length).toBeGreaterThan(5000);
+  console.log(`${ADOPTED_LAYOUT.label}: ${path}（${Math.round(bytes.length / 1000)}KB）`);
+}
+
 describe('版面案の書き出し', () => {
   it('は採用版面の PDF を書き出す', async () => {
-    const project = seedProjects[0];
-    const { workspace, assets } = projectWithImages();
-    const fontBytes = loadTestFont();
+    await write(ADOPTED_LAYOUT.id);
+  });
 
-    const ir = inject(
-      buildProposalIR({
-        project,
-        workspace,
-        provenance: {},
-        portfolio: seedPortfolio,
-        assets,
-        lang: 'ja',
-        builtAt: new Date('2026-08-13T00:00:00.000Z'),
-      }),
-    );
-
-    mkdirSync(OUT_DIR, { recursive: true });
-    const bytes = await renderLayoutPdf(ir, { fontBytes });
-    const path = `${OUT_DIR}/${ADOPTED_LAYOUT.id}.pdf`;
-    writeFileSync(path, bytes);
-    expect(bytes.length).toBeGreaterThan(5000);
-    console.log(`${ADOPTED_LAYOUT.label}: ${path}（${Math.round(bytes.length / 1000)}KB）`);
+  // 素材の複製で満量（タイル6枚＝3+3、カット6本＝4+2ページ）にした状態。
+  // 半端な行の再配分が左端と列グリッドを保つかを、実寸で確かめるための書き出し。
+  it('は素材を複製した満量の PDF も書き出す', async () => {
+    await write(`${ADOPTED_LAYOUT.id}-full`, { tiles: 6, cuts: 6 });
   });
 });

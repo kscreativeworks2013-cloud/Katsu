@@ -5,7 +5,7 @@
  * テンプレート差し替え（ブランドカラー適用等）はこの定義の差し替えとして実現する。
  */
 
-import type { Asset, PortfolioWork, Workspace } from '../data/types';
+import type { Asset, CropFocus, PortfolioWork, Workspace } from '../data/types';
 import { resolveAsset } from './assets';
 
 export type SlotSource = 'logo' | 'moodboard' | 'shots' | 'portfolio' | 'competitors';
@@ -16,6 +16,12 @@ export interface ImageSlot {
   source: SlotSource;
   /** スロットに入る最大枚数。shots のように可変のものは Infinity。 */
   capacity: number;
+  /**
+   * 同じ供給元（ムードボード）から引く複数スロットの取り出し位置（第8章 8-7）。
+   * 表紙・ブランド分析・撮影コンセプトが同じ1枚を並べないよう、割当側でずらす。
+   * 枚数が足りない場合は先頭へ回り込むため、重複は起こりうる（IR 側で検知する）。
+   */
+  offset?: number;
 }
 
 // 配置幅（mm）はここには置かない。版面定義から導出する（`slotWidthMm`／第8章 8-4）。
@@ -58,6 +64,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: 'ブランドイメージ',
         source: 'moodboard',
         capacity: 2,
+        offset: 1,
       },
     ],
   },
@@ -85,6 +92,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
         label: 'キービジュアル',
         source: 'moodboard',
         capacity: 1,
+        offset: 3,
       },
     ],
   },
@@ -133,6 +141,19 @@ export interface ResolvedSlotImage {
   /** 解決できたアセット。無ければ fallback のグラデーションで描く。 */
   asset?: Asset;
   fallback?: { from: string; to: string };
+  /** 切り出し位置の指定（第8章 8-7）。無指定なら版面側の既定（上寄せ）で切る。 */
+  focus?: CropFocus;
+}
+
+/**
+ * 供給元から、このスロットの取り分を切り出す。
+ * offset で開始位置をずらし、足りない場合だけ先頭へ回り込む（面が空になるより重複を採る）。
+ */
+function take<T>(pool: T[], slot: ImageSlot): T[] {
+  if (pool.length === 0) return [];
+  const count = Math.min(slot.capacity, pool.length);
+  const start = (slot.offset ?? 0) % pool.length;
+  return Array.from({ length: count }, (_, index) => pool[(start + index) % pool.length]);
 }
 
 /** スロットに入る画像を解決する。アセット未登録でも参照切れで壊れない（第5章 5-1）。 */
@@ -142,35 +163,48 @@ export function resolveSlot(
   portfolio: PortfolioWork[],
   assets: Record<string, Asset>,
 ): ResolvedSlotImage[] {
+  const withFocus = (image: ResolvedSlotImage): ResolvedSlotImage => ({
+    ...image,
+    focus: workspace.crops?.[image.key],
+  });
+
   switch (slot.source) {
     case 'logo':
       // ロゴアセットの登録UIは実装前のため、常に空（プレースホルダ表示）になる。
       return [];
     case 'moodboard':
-      return workspace.moodboard.slice(0, slot.capacity).map((tile) => ({
-        key: `${slot.id}-${tile.id}`,
-        caption: tile.caption,
-        asset: resolveAsset(assets, tile.assetId),
-        fallback: { from: tile.from, to: tile.to },
-      }));
+      return take(workspace.moodboard, slot).map((tile) =>
+        withFocus({
+          key: `${slot.id}-${tile.id}`,
+          caption: tile.caption,
+          asset: resolveAsset(assets, tile.assetId),
+          fallback: { from: tile.from, to: tile.to },
+        }),
+      );
     case 'shots':
-      return workspace.shots.slice(0, slot.capacity).map((shot) => ({
-        key: `${slot.id}-${shot.id}`,
-        caption: `Cut ${shot.no}｜${shot.subject}`,
-        asset: resolveAsset(assets, shot.assetId),
-      }));
+      return take(workspace.shots, slot).map((shot) =>
+        withFocus({
+          key: `${slot.id}-${shot.id}`,
+          caption: `Cut ${shot.no}｜${shot.subject}`,
+          asset: resolveAsset(assets, shot.assetId),
+        }),
+      );
     case 'competitors':
-      return workspace.competitors.slice(0, slot.capacity).map((competitor) => ({
-        key: `${slot.id}-${competitor.id}`,
-        caption: `${competitor.name}｜${competitor.visual}`,
-        asset: resolveAsset(assets, competitor.assetId),
-      }));
+      return take(workspace.competitors, slot).map((competitor) =>
+        withFocus({
+          key: `${slot.id}-${competitor.id}`,
+          caption: `${competitor.name}｜${competitor.visual}`,
+          asset: resolveAsset(assets, competitor.assetId),
+        }),
+      );
     case 'portfolio':
-      return portfolio.slice(0, slot.capacity).map((work) => ({
-        key: `${slot.id}-${work.id}`,
-        caption: work.title,
-        asset: resolveAsset(assets, work.assetId),
-        fallback: { from: work.from, to: work.to },
-      }));
+      return take(portfolio, slot).map((work) =>
+        withFocus({
+          key: `${slot.id}-${work.id}`,
+          caption: work.title,
+          asset: resolveAsset(assets, work.assetId),
+          fallback: { from: work.from, to: work.to },
+        }),
+      );
   }
 }

@@ -54,11 +54,16 @@ describe('low-resolution 警告', () => {
   });
 
   it('は同じ画像が複数スロットに出ても要約では1行に畳む', () => {
-    const ir = irWithLowResCover();
+    // タイルが1枚しか無ければ、表紙と撮影コンセプト（どちらも 297mm スロット）は
+    // 同じ1枚に回り込む。同じ配置幅・同じ画像なので警告は同文で2件出る。
+    const base = workspaceWithAsset('ast-low');
+    const ir = buildTestIR({
+      assets: { 'ast-low': LOW_RES },
+      workspace: { ...base, moodboard: base.moodboard.slice(0, 1) },
+    });
     const raw = ir.warnings.filter((warning) => warning.kind === 'low-resolution');
     const summary = warningSummary(ir).filter((line) => line.includes('印刷解像度'));
 
-    // 表紙と撮影コンセプトは同じ 297mm スロットなので、素の警告は2件出る。
     expect(raw.length).toBeGreaterThan(1);
     expect(summary).toHaveLength(1);
   });

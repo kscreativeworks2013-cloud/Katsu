@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type {
   Asset,
+  CropFocus,
   ExportRecord,
   PortfolioWork,
   Project,
@@ -98,6 +99,11 @@ export interface AppStore {
   editField: (projectId: string, path: string, value: unknown) => void;
   /** コンセプトの採用は利用者の選択であり、生成物ではない（保護対象にしない）。 */
   setAdoptedConcept: (projectId: string, conceptId: string) => void;
+  /**
+   * スロットごとの切り出し位置（第8章 8-7）。キーは解決済み画像のキー。
+   * null を渡すと既定（上寄せ）に戻る。
+   */
+  setCropFocus: (projectId: string, key: string, focus: CropFocus | null) => void;
   recordExports: (projectId: string, records: ExportRecord[]) => void;
 
   /** 画像の実体まわりの状態（第7章）。 */

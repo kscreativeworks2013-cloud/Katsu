@@ -50,6 +50,32 @@ describe('buildProposalIR', () => {
     expect(ir.sources.hasEdited).toBe(true);
   });
 
+  it('はスロットごとの切り出し位置を画像ブロックに載せる', () => {
+    const base = workspaceWithAsset('ast-1');
+    const ir = buildTestIR({
+      assets: { 'ast-1': testAsset('ast-1') },
+      // 同じ画像でも枠の縦横比が違うので、指定はスロット単位で効く。
+      workspace: { ...base, crops: { 'cover-key-mood-1': { x: 0.5, y: 0 } } },
+    });
+    const images = ir.sections
+      .flatMap((section) => section.blocks)
+      .filter((block) => block.type === 'image');
+
+    expect(images.find((block) => block.slotId === 'cover-key')?.focus).toEqual({
+      x: 0.5,
+      y: 0,
+    });
+    expect(images.find((block) => block.slotId === 'mood-tiles')?.focus).toBeUndefined();
+  });
+
+  it('はブランドのパレットから版面色を導く', () => {
+    const ir = buildTestIR();
+
+    // 台紙は紙色より暗い。色そのものではなく関係を IR が持つ（第8章 8-7）。
+    expect(ir.theme.mat).not.toBe(ir.theme.paper);
+    expect(ir.theme.paper).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
   it('はAI生成画像を含むことを記録する', () => {
     const ir = buildTestIR({
       assets: { 'ast-ai': testAsset('ast-ai', { origin: 'ai' }) },
@@ -135,6 +161,36 @@ describe('警告', () => {
     expect(ir.warnings.filter((warning) => warning.kind === 'missing-image')[0]?.severity).toBe(
       'info',
     );
+  });
+
+  it('は目立つスロットの重複を検知する（素材が足りず回り込んだとき）', () => {
+    // タイルが1枚しか無ければ、表紙・ブランド分析・撮影コンセプトは同じ1枚に回り込む。
+    const base = workspaceWithAsset('ast-1');
+    const ir = buildTestIR({
+      assets: { 'ast-1': testAsset('ast-1') },
+      workspace: { ...base, moodboard: base.moodboard.slice(0, 1) },
+    });
+    const duplicate = ir.warnings.find((warning) => warning.kind === 'duplicate-image');
+
+    expect(duplicate?.severity).toBe('info');
+    expect(duplicate?.message).toMatch(/重複して使われています/);
+  });
+
+  it('は素材が足りていれば目立つスロットに同じ画像を置かない', () => {
+    // ムードボードは8枚。表紙・ブランド分析・撮影コンセプトは別の枚に割り当たる。
+    const assets = Object.fromEntries(
+      [0, 1, 2, 3].map((index) => [`ast-${index}`, testAsset(`ast-${index}`)]),
+    );
+    const base = workspaceWithBody();
+    const ir = buildTestIR({
+      assets,
+      workspace: {
+        ...base,
+        moodboard: base.moodboard.map((tile, index) => ({ ...tile, assetId: `ast-${index}` })),
+      },
+    });
+
+    expect(ir.warnings.some((warning) => warning.kind === 'duplicate-image')).toBe(false);
   });
 
   it('は外部URL画像を埋め込まないことを知らせる', () => {

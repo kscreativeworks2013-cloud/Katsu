@@ -7,6 +7,7 @@
 import type {
   Asset,
   AssetOrigin,
+  CropFocus,
   FieldOrigin,
   PortfolioWork,
   Project,
@@ -17,6 +18,7 @@ import type {
 } from '../data/types';
 import { effectivePpi, pickVariant, requiredPixels, resolveAsset } from './assets';
 import { slotWidthMm } from './render/layout';
+import { deriveTheme, type RenderTheme } from './render/theme';
 import { PROPOSAL_TEMPLATE, resolveSlot } from './proposal';
 import { metaFor } from './provenance';
 
@@ -55,6 +57,8 @@ export type IRBlock =
       href?: string;
       /** アセットが無いときのプレースホルダ色。 */
       fallback?: { from: string; to: string };
+      /** 切り出し位置の指定（第8章 8-7）。無指定ならレンダラの既定で切る。 */
+      focus?: CropFocus;
     };
 
 /** 章の出所。どの Run が書いた値から作られたかを後から言えるようにする（第6章 6-3）。 */
@@ -81,6 +85,7 @@ export type IRWarningKind =
   | 'acknowledged'
   | 'missing-section'
   | 'missing-image'
+  | 'duplicate-image'
   | 'external-image'
   | 'low-resolution'
   | 'preview-only'
@@ -115,6 +120,8 @@ export interface ProposalIR {
   };
   sections: IRSection[];
   warnings: IRWarning[];
+  /** 版面色。ブランドのパレットから導出する（第8章 8-7）。出力形式によらず同じ値を使う。 */
+  theme: RenderTheme;
   sources: {
     /** IR 全体が参照した生成ライン。 */
     runIds: string[];
@@ -199,6 +206,17 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
       const isExternal = asset?.origin === 'external';
       const original = pickVariant(asset, 'output');
 
+      // 枠は解決できたが中身が無い（プレースホルダで出る）。出力は壊れないので info だが、
+      // 何枚が未登録のまま出たかは提出前に見えている必要がある（第8章 8-7）。
+      if (!asset) {
+        warnings.push({
+          kind: 'missing-image',
+          severity: 'info',
+          sectionId,
+          message: `${section.ja}の「${image.caption}」に画像が登録されていません。`,
+        });
+      }
+
       // 取り込み済み（実体を持つ）外部画像は埋め込めるので警告しない（第6章 6-8）。
       if (isExternal && asset?.variants.length === 0) {
         warnings.push({
@@ -248,10 +266,42 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
         },
         href: isExternal ? asset?.source : undefined,
         fallback: image.fallback,
+        focus: image.focus,
       });
     }
   }
   return blocks;
+}
+
+/**
+ * 提案の顔になるスロット（第8章 8-7）。ここに同じ画像が並ぶと、
+ * 見た目で分かるほど手を抜いた提案になる。割当はテンプレート側でずらしているが、
+ * 素材の点数が足りなければ回り込んで重複するため、その事実を出力前に言う。
+ */
+const PROMINENT_SLOTS = ['cover-key', 'brand-mood', 'concept-key'];
+
+function duplicateWarnings(sections: IRSection[]): IRWarning[] {
+  const slotsByAsset = new Map<string, Set<string>>();
+  const captions = new Map<string, string>();
+
+  for (const section of sections) {
+    for (const block of section.blocks) {
+      if (block.type !== 'image' || !block.assetId) continue;
+      if (!PROMINENT_SLOTS.includes(block.slotId)) continue;
+      const slots = slotsByAsset.get(block.assetId) ?? new Set<string>();
+      slots.add(block.slotLabel);
+      slotsByAsset.set(block.assetId, slots);
+      captions.set(block.assetId, block.caption);
+    }
+  }
+
+  return [...slotsByAsset.entries()]
+    .filter(([, slots]) => slots.size > 1)
+    .map(([assetId, slots]) => ({
+      kind: 'duplicate-image' as const,
+      severity: 'info' as const,
+      message: `「${captions.get(assetId) ?? assetId}」が${[...slots].join('・')}に重複して使われています。ムードボードの点数を増やすと自動で分かれます。`,
+    }));
 }
 
 function sourceFor(sectionId: string, input: BuildIRInput): IRSectionSource {
@@ -357,6 +407,8 @@ export function buildProposalIR(input: BuildIRInput): ProposalIR {
     });
   }
 
+  warnings.push(...duplicateWarnings(sections));
+
   const runIds = [...new Set(sections.flatMap((section) => section.source.runIds))];
   const withoutRevision = {
     irVersion: IR_VERSION,
@@ -371,6 +423,7 @@ export function buildProposalIR(input: BuildIRInput): ProposalIR {
     },
     sections,
     warnings,
+    theme: deriveTheme(input.workspace.brand?.palette),
     sources: {
       runIds,
       hasEdited: sections.some((section) => section.source.edited),

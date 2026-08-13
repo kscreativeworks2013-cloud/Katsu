@@ -10,6 +10,7 @@ import { emptyWorkspace } from '../data/generate';
 import type {
   Asset,
   AssetVariant,
+  CropFocus,
   ExportRecord,
   PortfolioWork,
   Project,
@@ -661,6 +662,23 @@ export function AppStoreProvider({
     [cascadeStale],
   );
 
+  /**
+   * 切り出し位置の指定（第8章 8-7）。生成物ではなく利用者の指定なので provenance では扱わず、
+   * 下流を stale にもしない（本文は変わらない）。null で既定（上寄せ）へ戻す。
+   */
+  const setCropFocus = useCallback(
+    (projectId: string, key: string, focus: CropFocus | null) => {
+      setWorkspaces((current) => {
+        const workspace = current[projectId] ?? emptyWorkspace();
+        const crops = { ...workspace.crops };
+        if (focus) crops[key] = focus;
+        else delete crops[key];
+        return { ...current, [projectId]: { ...workspace, crops } };
+      });
+    },
+    [],
+  );
+
   const recordExports = useCallback(
     (projectId: string, records: ExportRecord[]) => {
       setWorkspaces((current) => {
@@ -870,6 +888,7 @@ export function AppStoreProvider({
       acknowledgeStale,
       editField,
       setAdoptedConcept,
+      setCropFocus,
       recordExports,
       assetStorage,
       binaryStore: store,
@@ -903,6 +922,7 @@ export function AppStoreProvider({
       acknowledgeStale,
       editField,
       setAdoptedConcept,
+      setCropFocus,
       recordExports,
       assetStorage,
       store,

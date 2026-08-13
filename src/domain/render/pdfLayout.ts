@@ -4,6 +4,7 @@
  * 第6章のレンダラ契約は変えない：入力は IR だけ、ネットワークを使わない、IR を書き換えない。
  * 変わるのは面の作り方で、1カラムの流し込みをやめ、画像を主役にした面付けを行う。
  * 版面の値は layout.ts の比率定義から展開する（判型を差し替えても版面定義は1つ）。
+ * 色は IR の theme（ブランドのパレットからの導出）を使い、ここに定数を置かない。
  */
 
 import fontkit from '@pdf-lib/fontkit';
@@ -20,40 +21,36 @@ import {
   type PDFImage,
   type PDFPage,
 } from 'pdf-lib';
+import type { CropFocus } from '../../data/types';
 import type { IRBlock, IRSection, ProposalIR } from '../ir';
+import { wrapText } from './kinsoku';
 import {
   A4_LANDSCAPE,
   ADOPTED_LAYOUT,
   safeMargin,
   sectionMode,
+  tileGrid,
   toPoints,
   type LayoutSpec,
   type PageFormat,
   type Rect,
 } from './layout';
 import { splitRuns } from './textRuns';
-import { warningSummary } from './types';
-
-const INK = rgb(0.07, 0.06, 0.05);
-const MUTED = rgb(0.54, 0.51, 0.47);
-const CHAMPAGNE = rgb(0.7, 0.58, 0.42);
-const PAPER = rgb(0.98, 0.97, 0.95);
-/**
- * タイル面の台紙（第8章 8-5）。紙色より1〜2段暗いグレージュ。
- * 白背景の素材は輪郭が立ち、暗い素材は逆に浮く。罫線を引くと素材ごとに
- * 処理が変わる版面になり、紙色そのものを落とすと素材1点のために全体の
- * トーンを動かすことになるため、台紙だけを敷く。
- */
-const MAT = rgb(0.9, 0.885, 0.86);
+import { themeRgb } from './theme';
+import { checklistSummary, warningSummary } from './types';
 
 /**
  * 縦にはみ出した分を、どれだけ下側から切るか（0.5=中央基準、1.0=上端を全部残す）。
- * 人物は顔が上寄りにあるため、切るなら下から切る。
+ * 人物は顔が上寄りにあるため、切るなら下から切る。切り出し位置の指定がある画像では、
+ * この既定ではなく指定した点を枠の中心に置く（第8章 8-7）。
  */
 const CROP_FROM_BOTTOM = 0.78;
 
 /** タイルが横に伸びすぎると人物写真が帯になる。1枠の縦横比の上限。 */
 const MAX_CELL_ASPECT = 1.5;
+
+/** タイルの境界線の太さ（pt）。素材が高明度でも枠の下端が消えないための最小限。 */
+const TILE_EDGE_PT = 0.6;
 
 const ORIGIN_LABEL: Record<string, string> = {
   upload: '持ち込み',
@@ -62,12 +59,38 @@ const ORIGIN_LABEL: Record<string, string> = {
 };
 
 type ImageBlock = Extract<IRBlock, { type: 'image' }>;
+type Color = ReturnType<typeof rgb>;
+
+/** 版面色。IR の theme（ブランドのパレットからの導出）を pdf-lib の色型に写したもの。 */
+interface Palette {
+  paper: Color;
+  ink: Color;
+  accent: Color;
+  mat: Color;
+  matEdge: Color;
+  muted: Color;
+}
+
+function paletteOf(ir: ProposalIR): Palette {
+  const at = (hex: string): Color => {
+    const { r, g, b } = themeRgb(hex);
+    return rgb(r, g, b);
+  };
+  return {
+    paper: at(ir.theme.paper),
+    ink: at(ir.theme.ink),
+    accent: at(ir.theme.accent),
+    mat: at(ir.theme.mat),
+    matEdge: at(ir.theme.matEdge),
+    muted: at(ir.theme.muted),
+  };
+}
 
 /** 流し込みの1項目。見出しも本文も同じ流れに載せる。 */
 interface FlowEntry {
   text: string;
   size?: number;
-  color?: ReturnType<typeof rgb>;
+  color?: Color;
   leading?: number;
   /** 直前に空ける高さ（ページ高さ比）。 */
   gapBefore?: number;
@@ -93,29 +116,6 @@ function measure(text: string, fonts: FontPair, size: number): number {
   );
 }
 
-/** 日本語は単語境界が無いので、文字単位で幅を測って折り返す。 */
-function wrap(text: string, fonts: FontPair, size: number, width: number): string[] {
-  const lines: string[] = [];
-  let current = '';
-
-  for (const char of text) {
-    if (char === '\n') {
-      lines.push(current);
-      current = '';
-      continue;
-    }
-    const candidate = current + char;
-    if (measure(candidate, fonts, size) > width && current !== '') {
-      lines.push(current);
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current !== '') lines.push(current);
-  return lines;
-}
-
 function decodeDataUri(dataUri: string): { mime: string; bytes: Uint8Array } | undefined {
   const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUri);
   if (!match) return undefined;
@@ -139,6 +139,32 @@ function imageBlocks(section: IRSection): ImageBlock[] {
   return section.blocks.filter((block): block is ImageBlock => block.type === 'image');
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * 段の釣り合い（第8章 8-6）。1段目だけが埋まって右半分が白く残るのを防ぐ。
+ * 量が揃うところで項目を段へ配る。項目の途中では割らない（段をまたぐ段落を作らない）。
+ * 割り切れないときは前の段を厚くする（読み始めの段が短いほうが不自然に見える）。
+ */
+function distribute<T>(items: T[], weight: (item: T) => number, columns: number): T[][] {
+  const total = items.reduce((sum, item) => sum + weight(item), 0);
+  const target = total / columns;
+  const groups: T[][] = Array.from({ length: columns }, () => []);
+  let column = 0;
+  let filled = 0;
+
+  for (const item of items) {
+    const size = weight(item);
+    // 半分を越えた時点で次の段へ送る（項目の重心で判断する）。
+    if (column < columns - 1 && filled + size / 2 > target * (column + 1)) column += 1;
+    groups[column].push(item);
+    filled += size;
+  }
+  return groups;
+}
+
 /** 版面を実寸に展開して描くための道具。座標変換と切り抜きをここに閉じる。 */
 class Sheet {
   readonly page: PDFPage;
@@ -148,6 +174,7 @@ class Sheet {
     private readonly fonts: FontPair,
     private readonly format: PageFormat,
     private readonly spec: LayoutSpec,
+    private readonly palette: Palette,
   ) {
     this.page = doc.addPage([format.widthPt, format.heightPt]);
     this.page.drawRectangle({
@@ -155,7 +182,7 @@ class Sheet {
       y: 0,
       width: format.widthPt,
       height: format.heightPt,
-      color: PAPER,
+      color: palette.paper,
     });
   }
 
@@ -163,23 +190,42 @@ class Sheet {
     return this.spec.type[kind] * this.format.heightPt;
   }
 
-  fill(rect: Rect, color = PAPER): void {
+  fill(rect: Rect, color: Color): void {
     this.page.drawRectangle({ ...toPoints(rect, this.format), color });
+  }
+
+  /** 枠線だけを描く（塗りは持たない）。タイルの下端を素材によらず成立させる。 */
+  frame(rect: Rect, color: Color): void {
+    this.page.drawRectangle({
+      ...toPoints(rect, this.format),
+      borderColor: color,
+      borderWidth: TILE_EDGE_PT,
+    });
   }
 
   /**
    * 枠いっぱいに画像を敷く（はみ出す側は切り落とす）。
    * pdf-lib に切り抜きは無いので、クリップ矩形を積んでから拡大した画像を描く。
    *
-   * 縦にはみ出すときは**上寄せで残す**。人物写真は顔が画面の上寄りにあり、
-   * 中央基準で切ると頭が落ちる（実写で表紙・タイル・ストリップの全てで再現した）。
+   * 既定は**上寄せで残す**。人物写真は顔が画面の上寄りにあり、中央基準で切ると頭が落ちる
+   * （実写で表紙・タイル・ストリップの全てで再現した）。focus の指定があるときは、
+   * その点（画像内の相対位置）が枠の中心に来るように寄せる。余る側だけが動くので、
+   * どんな値を指定しても枠に隙間はできない。
    */
-  cover(rect: Rect, image: PDFImage): void {
+  cover(rect: Rect, image: PDFImage, focus?: CropFocus): void {
     const box = toPoints(rect, this.format);
     const scale = Math.max(box.width / image.width, box.height / image.height);
     const width = image.width * scale;
     const height = image.height * scale;
-    const overflow = height - box.height;
+    const overflowX = width - box.width;
+    const overflowY = height - box.height;
+
+    const fromTop = focus
+      ? clamp(focus.y * height - box.height / 2, 0, overflowY)
+      : overflowY * (1 - CROP_FROM_BOTTOM);
+    const fromLeft = focus
+      ? clamp(focus.x * width - box.width / 2, 0, overflowX)
+      : overflowX / 2;
 
     this.page.pushOperators(
       pushGraphicsState(),
@@ -188,8 +234,8 @@ class Sheet {
       endPath(),
     );
     this.page.drawImage(image, {
-      x: box.x + (box.width - width) / 2,
-      y: box.y - overflow * CROP_FROM_BOTTOM,
+      x: box.x - fromLeft,
+      y: box.y - (overflowY - fromTop),
       width,
       height,
     });
@@ -198,8 +244,32 @@ class Sheet {
 
   /** 画像が無いスロットの受け皿。面付けを崩さないよう、同じ枠を淡色で置く。 */
   placeholder(rect: Rect): void {
-    const box = toPoints(rect, this.format);
-    this.page.drawRectangle({ ...box, color: rgb(0.91, 0.89, 0.86) });
+    this.fill(rect, this.palette.mat);
+  }
+
+  /** 1項目を流したときの行数。段の釣り合いと帯の高さの決定に使う。 */
+  lines(entry: FlowEntry, widthRatio: number): number {
+    const size = entry.size ?? this.size('body');
+    return this.wrap(entry.text, size, widthRatio * this.format.widthPt).length;
+  }
+
+  /** 項目を流すのに要る高さ（ページ高さ比）。面の下が白く残らないよう帯の高さを決める。 */
+  height(entries: FlowEntry[], widthRatio: number): number {
+    const total = entries.reduce((sum, entry) => {
+      const size = entry.size ?? this.size('body');
+      const step = size * (entry.leading ?? 1.7);
+      return (
+        sum +
+        (entry.gapBefore ?? 0) * this.format.heightPt +
+        step * this.lines(entry, widthRatio) +
+        step * 0.3
+      );
+    }, 0);
+    return total / this.format.heightPt;
+  }
+
+  private wrap(text: string, size: number, width: number): string[] {
+    return wrapText(text, (part) => measure(part, this.fonts, size), width);
   }
 
   /**
@@ -215,7 +285,7 @@ class Sheet {
       const size = entry.size ?? this.size('body');
       const step = size * (entry.leading ?? 1.7);
       const before = (entry.gapBefore ?? 0) * this.format.heightPt;
-      const wrapped = wrap(entry.text, this.fonts, size, box.width);
+      const wrapped = this.wrap(entry.text, size, box.width);
       const needed = before + step * wrapped.length;
 
       // 見出しだけが段の末尾に残るのを避ける（次の1行ぶんも入るか見る）。
@@ -225,7 +295,7 @@ class Sheet {
       y -= before;
       for (const line of wrapped) {
         y -= size;
-        this.draw(line, box.x, y, size, entry.color ?? INK);
+        this.draw(line, box.x, y, size, entry.color ?? this.palette.ink);
         y -= step - size;
       }
       y -= step * 0.3;
@@ -235,26 +305,37 @@ class Sheet {
 
   /** 描かずに、その枠へ入り切るかだけを見る（段に何章詰められるかの判定に使う）。 */
   overflow(entries: FlowEntry[], rect: Rect): boolean {
-    const box = toPoints(rect, this.format);
-    let y = box.y + box.height;
-
-    for (const entry of entries) {
-      const size = entry.size ?? this.size('body');
-      const step = size * (entry.leading ?? 1.7);
-      const lines = wrap(entry.text, this.fonts, size, box.width).length;
-      y -= (entry.gapBefore ?? 0) * this.format.heightPt + step * lines + step * 0.3;
-      if (y < box.y) return true;
-    }
-    return false;
+    return this.height(entries, rect.w) > rect.h;
   }
 
-  /** 本文だけの流し込み（画像面の説明文など）。 */
-  text(lines: string[], rect: Rect): string[] {
-    const rest = this.flow(
-      lines.map((text) => ({ text })),
-      rect,
-    );
-    return rest.map((entry) => entry.text);
+  /**
+   * 本文を段に釣り合わせて流し、入り切らなかった行を返す（第8章 8-6）。
+   * 1段に収まる量でも右半分を空けたままにしない。段からの溢れは次の段へ送る。
+   * 段落は割らないので、段の切れ目が文の途中に来ることはない。
+   */
+  columns(lines: string[], rect: Rect, gap: number): string[] {
+    const columns = 2;
+    const colW = (rect.w - gap * (columns - 1)) / columns;
+    const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
+    const groups = distribute(entries, (entry) => this.lines(entry, colW), columns);
+
+    let carry: FlowEntry[] = [];
+    for (let column = 0; column < columns; column += 1) {
+      carry = this.flow([...carry, ...groups[column]], {
+        ...rect,
+        x: rect.x + column * (colW + gap),
+        w: colW,
+      });
+    }
+    return carry.map((entry) => entry.text);
+  }
+
+  /** 段に割ったときに要る高さ（最も高い段）。画像帯の高さを決めるのに使う。 */
+  columnHeight(lines: string[], widthRatio: number, columns: number, gap: number): number {
+    const colW = (widthRatio - gap * (columns - 1)) / columns;
+    const entries = lines.map((text) => ({ text }) satisfies FlowEntry);
+    const groups = distribute(entries, (entry) => this.lines(entry, colW), columns);
+    return Math.max(...groups.map((group) => this.height(group, colW)), 0);
   }
 
   /** 与えた幅（比率）に収まる文字サイズ。表紙のタイトルが版面からはみ出すのを防ぐ。 */
@@ -273,8 +354,8 @@ class Sheet {
     at: { x: number; y: number },
     {
       size = this.size('caption'),
-      color = INK,
-    }: { size?: number; color?: ReturnType<typeof rgb> } = {},
+      color = this.palette.ink,
+    }: { size?: number; color?: Color } = {},
   ): void {
     this.draw(
       content,
@@ -289,13 +370,7 @@ class Sheet {
    * 1行を描く。ASCII の並びは欧文フォント、それ以外は和文フォントに渡す。
    * 分けないと数字のテキスト層が壊れる（textRuns.ts に理由）。
    */
-  private draw(
-    content: string,
-    x: number,
-    y: number,
-    size: number,
-    color: ReturnType<typeof rgb>,
-  ): void {
+  private draw(content: string, x: number, y: number, size: number, color: Color): void {
     let cursor = x;
     for (const run of splitRuns(content)) {
       const font = fontFor(this.fonts, run.latin);
@@ -318,11 +393,6 @@ class Sheet {
       text = text.slice(0, -1);
     }
     return `${text}…`;
-  }
-
-  /** 画像の上に文字を置くための暗幕。写真の明暗に関わらず可読性を保つ。 */
-  scrim(rect: Rect): void {
-    this.page.drawRectangle({ ...toPoints(rect, this.format), color: INK, opacity: 0.42 });
   }
 }
 
@@ -370,11 +440,24 @@ export async function renderLayoutPdf(
   doc.setTitle(ir.project.name);
   doc.setSubject(`${ir.project.brand} / ${ir.project.client}`);
   doc.setProducer('Luxury Beauty Visual Proposal OS');
+  // 日時は組み立て時刻（IR）を使う。出力時刻を入れると、同じ IR から出したファイルが
+  // 毎回違うバイト列になり、「同じ版のはずのファイル」を突き合わせられなくなる。
+  const builtAt = new Date(ir.builtAt);
+  doc.setCreationDate(builtAt);
+  doc.setModificationDate(builtAt);
 
+  const palette = paletteOf(ir);
   const margin = safeMargin(format);
-  const sheet = () => new Sheet(doc, fonts, format, spec);
+  const sheet = () => new Sheet(doc, fonts, format, spec, palette);
   const headingSize = spec.type.heading * format.heightPt;
   const captionRatio = spec.type.caption * 1.9;
+  /** 見出しの下端から本文・画像までの間隔。 */
+  const afterHeading = 0.035;
+  /**
+   * 面の頭に置く見出しのベースライン。安全マージンは字面ではなくフォントの
+   * アセンダ枠で見る（1mm でも外に出れば、断裁のばらつきで削れる可能性が残る）。
+   */
+  const headTop = margin.y + spec.type.heading * 1.2;
 
   // 同じアセットが複数の面に出るので、埋め込みは1回にまとめる。
   const embedded = new Map<string, PDFImage | undefined>();
@@ -406,16 +489,24 @@ export async function renderLayoutPdf(
   };
 
   /** 枠に画像かプレースホルダを置き、下にキャプションを添える。 */
-  async function place(page: Sheet, rect: Rect, block: ImageBlock): Promise<void> {
+  async function place(
+    page: Sheet,
+    rect: Rect,
+    block: ImageBlock,
+    options: { edge?: boolean } = {},
+  ): Promise<void> {
     const art: Rect = { ...rect, h: rect.h - captionRatio };
     const image = await imageFor(block);
-    if (image) page.cover(art, image);
+    if (image) page.cover(art, image, block.focus);
     else page.placeholder(art);
+    // 素材が高明度だと台紙と地続きに見え、下端が揃っていないように読める。
+    // 枠線は素材によらず一律に引く（素材ごとに処理を変えない）。
+    if (options.edge) page.frame(art, palette.matEdge);
     // キャプションは枠の下に置き、次の枠と重ならない高さを確保しておく。
     page.line(
       page.clip(caption(block), rect.w),
       { x: rect.x, y: art.y + art.h + captionRatio * 0.72 },
-      { color: MUTED },
+      { color: palette.muted },
     );
   }
 
@@ -427,7 +518,7 @@ export async function renderLayoutPdf(
 
   const first = sheet();
   const art: Rect = { x: 0, y: 0, w: 1, h: 0.66 };
-  if (keyImage) first.cover(art, keyImage);
+  if (keyImage) first.cover(art, keyImage, keyVisual?.focus);
   else first.placeholder(art);
   first.line(
     ir.project.name,
@@ -437,12 +528,12 @@ export async function renderLayoutPdf(
   first.line(
     `${ir.project.brand}／${ir.project.client}`,
     { x: margin.x, y: 0.86 },
-    { size: first.size('heading'), color: CHAMPAGNE },
+    { size: first.size('heading'), color: palette.accent },
   );
   first.line(
     `${ir.project.proposalDate}／版 ${ir.revision}`,
     { x: margin.x, y: 0.92 },
-    { color: MUTED },
+    { color: palette.muted },
   );
 
   // ── 各章 ─────────────────────────────────────────────
@@ -457,6 +548,11 @@ export async function renderLayoutPdf(
       const height = 1 - top - margin.y;
       const colW = (1 - margin.x * 2 - spec.dense.gap) / spec.dense.columns;
 
+      /*
+       * dense 面は段を順に埋める（1段目を満たしてから2段目へ）。
+       * visual 面のように釣り合わせないのは、ここでは段の中身が章だからである。
+       * 量で割ると、見出しが1段目の末尾に残って本文だけが2段目に移る面ができる。
+       */
       for (let column = 0; column < spec.dense.columns && denseQueue.length > 0; column += 1) {
         const rect: Rect = {
           x: margin.x + column * (colW + spec.dense.gap),
@@ -486,16 +582,22 @@ export async function renderLayoutPdf(
           taken += 1;
         }
 
+        // 溢れた分を章ごとに組み直して次の段・次の面へ返す。
         const rest = page.flow(entries, rect);
-        if (rest.length > 0) {
-          const title = rest[0]?.heading
-            ? rest[0].text
-            : `${entries.find((entry) => entry.heading)?.text ?? ''}（続き）`;
-          denseQueue.unshift({
-            title,
-            lines: rest.filter((entry) => !entry.heading).map((entry) => entry.text),
-          });
+        const back: { title: string; lines: string[] }[] = [];
+        for (const entry of rest) {
+          if (entry.heading) {
+            back.push({ title: entry.text, lines: [] });
+            continue;
+          }
+          if (back.length === 0) {
+            const drawn = entries.slice(0, entries.length - rest.length);
+            const heading = [...drawn].reverse().find((item) => item.heading)?.text ?? '';
+            back.push({ title: `${heading}（続き）`, lines: [] });
+          }
+          back[back.length - 1].lines.push(entry.text);
         }
+        denseQueue.unshift(...back);
       }
     }
   };
@@ -517,12 +619,7 @@ export async function renderLayoutPdf(
       await renderShots(section.title, images, lines);
       continue;
     }
-    if (mode === 'visual') {
-      flushDense();
-      await renderVisual(section.title, images, lines);
-      continue;
-    }
-    if (images.length > 0) {
+    if (mode === 'visual' || images.length > 0) {
       flushDense();
       await renderVisual(section.title, images, lines);
       continue;
@@ -533,28 +630,36 @@ export async function renderLayoutPdf(
 
   // 出力物にも警告を残す（第6章 6-4、第7章 7-8）。画面で確認しただけでは、
   // 手元に落ちた PDF がどの状態で出たのか後から分からない。
+  // warn は「このまま出すと壊れている」、info は提出前に見ておく件数（第8章 8-7）。
   const notes = warningSummary(ir);
-  if (notes.length > 0) {
+  const checklist = checklistSummary(ir);
+  if (notes.length > 0 || checklist.length > 0) {
     const page = sheet();
-    page.line(
-      '出力時の注意',
-      { x: margin.x, y: margin.y + spec.type.heading },
-      { size: page.size('heading') },
-    );
-    page.flow(
-      notes.map((note) => ({ text: `・${note}`, color: MUTED })),
-      {
+    let top = margin.y;
+    const write = (title: string, items: string[]): void => {
+      if (items.length === 0) return;
+      page.line(
+        title,
+        { x: margin.x, y: top + spec.type.heading * 1.2 },
+        { size: page.size('heading') },
+      );
+      const rect: Rect = {
         x: margin.x,
-        y: margin.y + spec.type.heading + 0.03,
+        y: top + spec.type.heading * 1.2 + afterHeading,
         w: 1 - margin.x * 2,
-        h: 1 - margin.y * 2,
-      },
-    );
+        h: 1 - top - margin.y,
+      };
+      const entries = items.map((item) => ({ text: `・${item}`, color: palette.muted }));
+      page.flow(entries, rect);
+      top = rect.y + page.height(entries, rect.w) + 0.03;
+    };
+    write('出力時の注意', notes);
+    write('提出前チェック', checklist);
   }
 
   /**
-   * 画像が主役の面。帯の高さは本文量で決める（本文が少ない面ほど画像が伸びる）。
-   * これで「下半分が白いだけ」の面が出なくなる。
+   * 画像が主役の面。帯の高さは本文の実測から決める（本文が少ない面ほど画像が伸びる）。
+   * 本文は2段に釣り合わせるので、面の右半分も下部も白いまま残らない。
    */
   async function renderVisual(
     title: string,
@@ -563,10 +668,14 @@ export async function renderLayoutPdf(
   ): Promise<void> {
     const page = sheet();
     const shown = blocks.slice(0, 3);
-    // 本文1行あたり 0.032 を目安に、帯を上限から削る。
-    const band = Math.max(
+    const bodyW = 1 - margin.x * 2;
+
+    // 本文を2段に割ったときの高さから帯を決める。上限・下限は版面定義に従う。
+    const bodyH = page.columnHeight(lines, bodyW, 2, spec.dense.gap);
+    const band = clamp(
+      1 - margin.y - bodyH - spec.type.heading - afterHeading - captionRatio - 0.02,
       spec.band.min,
-      Math.min(spec.band.max, spec.band.max - lines.length * 0.032),
+      spec.band.max,
     );
 
     const gap = 0.008;
@@ -574,12 +683,15 @@ export async function renderLayoutPdf(
     for (let index = 0; index < shown.length; index += 1) {
       const cell: Rect = { x: index * (cellW + gap), y: 0, w: cellW, h: band };
       const image = await imageFor(shown[index]);
-      if (image) page.cover(cell, image);
+      if (image) page.cover(cell, image, shown[index].focus);
       else page.placeholder(cell);
+      // 画像は裁ち落としてよいが、読ませる要素は安全マージンの内側に入れる。
+      // キャプションは枠に寄せつつ、面の端に近い枠では版面の内側へ寄せ直す。
+      const capX = clamp(cell.x + 0.006, margin.x, 1 - margin.x);
       page.line(
-        page.clip(caption(shown[index]), cellW - 0.01),
-        { x: index * (cellW + gap) + 0.006, y: band + captionRatio * 0.72 },
-        { color: MUTED },
+        page.clip(caption(shown[index]), Math.min(cell.x + cellW, 1 - margin.x) - capX),
+        { x: capX, y: band + captionRatio * 0.72 },
+        { color: palette.muted },
       );
     }
 
@@ -590,28 +702,19 @@ export async function renderLayoutPdf(
       { size: page.size('heading') },
     );
 
-    const bodyTop = top + spec.type.heading + 0.03;
-    const colW = (1 - margin.x * 2 - spec.dense.gap) / 2;
-    // 画像面でも行長は抑える。読ませる面ではなく、見せる面である。
-    let rest = page.text(lines, {
-      x: margin.x,
-      y: bodyTop,
-      w: colW,
-      h: 1 - bodyTop - margin.y,
-    });
-    rest = page.text(rest, {
-      x: margin.x + colW + spec.dense.gap,
-      y: bodyTop,
-      w: colW,
-      h: 1 - bodyTop - margin.y,
-    });
+    const bodyTop = top + spec.type.heading + afterHeading;
+    const rest = page.columns(
+      lines,
+      { x: margin.x, y: bodyTop, w: bodyW, h: 1 - bodyTop - margin.y },
+      spec.dense.gap,
+    );
     // 溢れた分は dense の流れへ送る（画像面を本文で押し広げない）。
     if (rest.length > 0) denseQueue.push({ title: `${title}（続き）`, lines: rest });
   }
 
   /**
-   * タイル面（ムードボード）。最終ページは残数に応じて列数を組み直し、
-   * 「2枚だけの面」を作らない。
+   * タイル面（ムードボード）。最終ページは残数に応じて列数を組み直すが、
+   * 左端と列グリッドは面の中で一定に保つ（第8章 8-6）。
    */
   async function renderTiles(title: string, blocks: ImageBlock[]): Promise<void> {
     const { cols, rows, gap } = spec.moodboard;
@@ -619,56 +722,33 @@ export async function renderLayoutPdf(
 
     for (let start = 0; start < blocks.length; start += perPage) {
       const page = sheet();
-      const head = margin.y + spec.type.heading + 0.03;
-      page.line(
-        title,
-        { x: margin.x, y: margin.y + spec.type.heading },
-        { size: page.size('heading') },
-      );
+      const head = headTop;
+      const area: Rect = {
+        x: margin.x,
+        y: head + afterHeading,
+        w: 1 - margin.x * 2,
+        h: 1 - head - afterHeading - margin.y,
+      };
 
-      const area: Rect = { x: margin.x, y: head, w: 1 - margin.x * 2, h: 1 - head - margin.y };
       // タイル領域だけに台紙を敷く。ページ全体の紙色は変えない。
-      const bleedX = margin.x * 0.45;
-      const bleedY = margin.y * 0.45;
+      // 台紙は見出しより先に置く（後から敷くと見出しに重なる）。
+      const bleed = 0.018;
       page.fill(
-        {
-          x: area.x - bleedX,
-          y: area.y - bleedY,
-          w: area.w + bleedX * 2,
-          h: area.h + bleedY * 2,
-        },
-        MAT,
+        { x: area.x - bleed, y: area.y - bleed, w: area.w + bleed * 2, h: area.h + bleed * 2 },
+        palette.mat,
       );
-      const onPage = Math.min(perPage, blocks.length - start);
-      // 残数で列と行を組み直す（例：残り2枚なら1行2列の大判にする）。
-      const usedCols = Math.min(cols, onPage);
-      const usedRows = Math.ceil(onPage / usedCols);
-      const cellH = (area.h - gap * (usedRows - 1)) / usedRows;
+      page.line(title, { x: margin.x, y: head }, { size: page.size('heading') });
 
+      const onPage = Math.min(perPage, blocks.length - start);
+      const cells = tileGrid(onPage, area, {
+        cols,
+        gap,
+        maxAspect: MAX_CELL_ASPECT,
+        captionRatio,
+        format,
+      });
       for (let index = 0; index < onPage; index += 1) {
-        const row = Math.floor(index / usedCols);
-        const col = index - row * usedCols;
-        // その行の枚数で幅を決める。半端な行も行幅いっぱいに伸ばし、空セルを残さない。
-        const inRow = Math.min(usedCols, onPage - row * usedCols);
-        // その行の枚数で幅を決める。ただし伸ばしすぎない：横長になりすぎた枠に
-        // 縦位置の人物写真を入れると顔が入らず帯になる（実写で確認）。
-        const stretched = (area.w - gap * (inRow - 1)) / inRow;
-        const cellW = Math.min(
-          stretched,
-          ((cellH - captionRatio) * MAX_CELL_ASPECT * format.heightPt) / format.widthPt,
-        );
-        // 伸ばさなかったぶんは行ごと中央に寄せ、片側だけ空くのを避ける。
-        const offset = (area.w - (cellW * inRow + gap * (inRow - 1))) / 2;
-        await place(
-          page,
-          {
-            x: area.x + offset + col * (cellW + gap),
-            y: area.y + row * (cellH + gap),
-            w: cellW,
-            h: cellH,
-          },
-          blocks[start + index],
-        );
+        await place(page, cells[index], blocks[start + index], { edge: true });
       }
     }
   }
@@ -682,48 +762,54 @@ export async function renderLayoutPdf(
     blocks: ImageBlock[],
     lines: string[],
   ): Promise<void> {
-    const { perPage, strip } = spec.shots;
+    const { perPage, rows, strip } = spec.shots;
+    const gap = 0.006;
+    // 枠の幅は常に perPage 分割。カットが少ない面でも枠を広げない
+    // （横に伸ばすと縦位置のカットが帯になり、絵コンテとして読めなくなる）。
+    const cellW = (1 - margin.x * 2 - gap * (perPage - 1)) / perPage;
+    const bodyW = 1 - margin.x * 2;
+    const onePage = perPage * rows;
     let rest = lines;
 
-    for (let start = 0; start < blocks.length; start += perPage) {
+    for (let start = 0; start < blocks.length; start += onePage) {
       const page = sheet();
-      const head = margin.y + spec.type.heading;
+      const head = headTop;
       page.line(title, { x: margin.x, y: head }, { size: page.size('heading') });
 
-      const top = head + 0.03;
-      const onPage = Math.min(perPage, blocks.length - start);
-      const gap = 0.006;
-      // 枠の幅は常に perPage 分割。カットが少ない面でも枠を広げない
-      // （横に伸ばすと縦位置のカットが帯になり、絵コンテとして読めなくなる）。
-      const cellW = (1 - margin.x * 2 - gap * (perPage - 1)) / perPage;
+      const top = head + afterHeading;
+      const onPage = Math.min(onePage, blocks.length - start);
+      // 半端なカットは次の段へ送り、面をまたがせない（2枚だけの面を作らない）。
+      const usedRows = Math.ceil(onPage / perPage);
+
+      const bodyH = page.columnHeight(rest, bodyW, 2, spec.dense.gap);
+      // 仕様が短い面では帯を伸ばして下部の空きを詰める。上限は版面定義（段数ぶん緩める）。
+      const band = clamp(
+        1 - margin.y - bodyH - top - 0.02,
+        strip.min,
+        strip.max * (usedRows > 1 ? 1.4 : 1),
+      );
+      const cellH = (band - gap * (usedRows - 1)) / usedRows;
 
       for (let index = 0; index < onPage; index += 1) {
+        const row = Math.floor(index / perPage);
         await place(
           page,
           {
-            x: margin.x + index * (cellW + gap),
-            y: top,
+            x: margin.x + (index - row * perPage) * (cellW + gap),
+            y: top + row * (cellH + gap),
             w: cellW,
-            h: strip,
+            h: cellH,
           },
           blocks[start + index],
         );
       }
 
-      const bodyTop = top + strip + 0.02;
-      const colW = (1 - margin.x * 2 - spec.dense.gap) / 2;
-      rest = page.text(rest, {
-        x: margin.x,
-        y: bodyTop,
-        w: colW,
-        h: 1 - bodyTop - margin.y,
-      });
-      rest = page.text(rest, {
-        x: margin.x + colW + spec.dense.gap,
-        y: bodyTop,
-        w: colW,
-        h: 1 - bodyTop - margin.y,
-      });
+      const bodyTop = top + band + 0.02;
+      rest = page.columns(
+        rest,
+        { x: margin.x, y: bodyTop, w: bodyW, h: 1 - bodyTop - margin.y },
+        spec.dense.gap,
+      );
     }
 
     if (rest.length > 0) denseQueue.push({ title: `${title}（続き）`, lines: rest });
