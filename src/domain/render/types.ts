@@ -53,9 +53,16 @@ export function isDraft(ir: ProposalIR): boolean {
   );
 }
 
-/** 出力物の冒頭に載せる警告の要約（第6章 6-4）。 */
+/**
+ * 出力物に載せる警告の要約（第6章 6-4）。
+ * 同じ画像が複数のスロットに出ると同文が並ぶため、重複は畳む。
+ */
 export function warningSummary(ir: ProposalIR): string[] {
-  return ir.warnings
-    .filter((warning) => warning.severity === 'warn')
-    .map((warning) => warning.message);
+  return [
+    ...new Set(
+      ir.warnings
+        .filter((warning) => warning.severity === 'warn')
+        .map((warning) => warning.message),
+    ),
+  ];
 }
