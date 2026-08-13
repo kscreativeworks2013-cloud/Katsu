@@ -96,6 +96,8 @@ function SectionSlots({
                     asset={image.asset}
                     alt={image.caption}
                     fallback={image.fallback}
+                    // 1〜2枚のスロットは幅780px前後まで広がるので原寸で描く（第7章 7-7）。
+                    large={images.length <= 2}
                   />
                   <figcaption className="tile-body">
                     <p>{image.caption}</p>

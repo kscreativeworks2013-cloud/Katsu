@@ -47,16 +47,20 @@ export function hasOriginal(asset: Asset | undefined): boolean {
 
 /**
  * 用途ごとの variant の選択（第7章 7-7）。
- * 画面は preview を優先し、出力は原寸のみを狙う（原寸が無ければ呼び出し側が警告する）。
+ * ・screen：一覧・タイル。preview を優先する（多数が同時に並ぶため軽さを取る）。
+ * ・screen-large：提案書プレビューの大きなスロット。実測で 780px 前後・Retina で
+ *   1500px 超になるため preview（長辺800px）では甘い。原寸を優先する。
+ * ・output：原寸のみ。無ければ呼び出し側が警告する。
  */
 export function pickVariant(
   asset: Asset | undefined,
-  use: 'screen' | 'output',
+  use: 'screen' | 'screen-large' | 'output',
 ): AssetVariant | undefined {
   if (!asset) return undefined;
   const original = variantOf(asset, 'original');
   const preview = variantOf(asset, 'preview');
-  return use === 'screen' ? (preview ?? original) : original;
+  if (use === 'output') return original;
+  return use === 'screen-large' ? (original ?? preview) : (preview ?? original);
 }
 
 /** variant を差し替える（同じ kind は1つまで）。 */

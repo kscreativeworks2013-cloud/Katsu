@@ -13,6 +13,7 @@ export function AssetImage({
   fallback,
   className = 'tile-art',
   style,
+  large = false,
 }: {
   asset: Asset | undefined;
   alt: string;
@@ -20,8 +21,10 @@ export function AssetImage({
   fallback?: { from: string; to: string };
   className?: string;
   style?: CSSProperties;
+  /** 大きく表示するスロット（幅がタイルより広い）。原寸を使う。 */
+  large?: boolean;
 }) {
-  const url = useAssetImage(asset);
+  const url = useAssetImage(asset, large);
 
   if (url) {
     return (

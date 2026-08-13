@@ -4,8 +4,13 @@ import { createImageCache } from './imageCache';
 
 /*
  * 表示用キャッシュ（第7章 7-7）。
- * 予算はバイト数で持ち、表示中のものは超過しても捨てない。
+ * 予算はデコード後サイズ（幅×高さ×4）で持ち、表示中のものは超過しても捨てない。
  */
+
+/** 指定のデコード後サイズになる寸法。予算計算の入力を明示するために使う。 */
+function sizeOf(decoded: number) {
+  return { width: decoded / 4, height: 1 };
+}
 
 let created = 0;
 let revoked: string[] = [];
@@ -34,28 +39,29 @@ function storeWithBlobs(sizes: Record<string, number>) {
 }
 
 describe('createImageCache', () => {
-  it('は予算を超えた分だけ古い順に手放す（件数ではなくバイト数）', async () => {
-    const store = storeWithBlobs({ a: 400, b: 400, c: 400 });
+  it('は予算を超えた分だけ古い順に手放す（件数ではなくデコード後サイズ）', async () => {
+    // ファイルは 10 バイトでも、展開後は 400 バイトを占める画像として扱う。
+    const store = storeWithBlobs({ a: 10, b: 10, c: 10 });
     const cache = createImageCache(store, undefined, 1000);
 
-    const first = await cache.load('a');
-    await cache.load('b');
-    await cache.load('c');
+    const first = await cache.load('a', sizeOf(400));
+    await cache.load('b', sizeOf(400));
+    await cache.load('c', sizeOf(400));
 
     // 400×3 は 1000 を超えるので、最も古い a だけが落ちる。
     expect(revoked).toEqual([first]);
     expect(cache.size()).toBe(800);
     // 落ちた分は取り直せる（実体はストアに残っている）。
-    expect(await cache.load('a')).toBeDefined();
+    expect(await cache.load('a', sizeOf(400))).toBeDefined();
   });
 
   it('は表示中のものを予算超過でも捨てない', async () => {
-    const store = storeWithBlobs({ a: 800, b: 800 });
+    const store = storeWithBlobs({ a: 10, b: 10 });
     const cache = createImageCache(store, undefined, 1000);
 
-    await cache.load('a');
+    await cache.load('a', sizeOf(800));
     cache.retain('a');
-    await cache.load('b');
+    await cache.load('b', sizeOf(800));
 
     // a は表示中なので残り、予算超過のまま保持する（見えている画像を消さない）。
     expect(revoked).toEqual([]);
@@ -79,7 +85,10 @@ describe('createImageCache', () => {
     const spy = vi.spyOn(store, 'get');
     const cache = createImageCache(store, undefined, 1000);
 
-    const [first, second] = await Promise.all([cache.load('a'), cache.load('a')]);
+    const [first, second] = await Promise.all([
+      cache.load('a', sizeOf(100)),
+      cache.load('a', sizeOf(100)),
+    ]);
 
     expect(first).toBe(second);
     expect(spy).toHaveBeenCalledTimes(1);
@@ -87,7 +96,7 @@ describe('createImageCache', () => {
 
   it('は削除したアセットの object URL を捨てる', async () => {
     const cache = createImageCache(storeWithBlobs({ a: 100 }), undefined, 1000);
-    const url = await cache.load('a');
+    const url = await cache.load('a', sizeOf(100));
 
     cache.forget('a');
 

@@ -32,6 +32,7 @@ import { applyValues, buildDiff, defaultSelection } from '../domain/run';
 import { WORKFLOW_STEPS, downstreamSteps, inputsHash } from '../domain/steps';
 import type { GenerationEngine } from '../engine/types';
 import { mockEngine } from '../engine/mockEngine';
+import { downloadFile } from '../lib/download';
 import { createId } from '../lib/projects';
 import {
   AppStoreContext,
@@ -41,7 +42,7 @@ import {
   type NewProjectInput,
   type PendingRun,
 } from './context';
-import { clearLegacyBackup, loadState, saveState, type SaveOutcome } from './persistence';
+import { loadState, saveState, writeLegacyRemainder, type SaveOutcome } from './persistence';
 
 const EMPTY_CREATIVE: Project['creative'] = {
   worldview: '',
@@ -121,17 +122,18 @@ export function AppStoreProvider({
   const [missingAssetIds, setMissingAssetIds] = useState<string[]>([]);
   const [persistState, setPersistState] = useState<PersistState>('unsupported');
   const [quotaBytes, setQuotaBytes] = useState<number | undefined>(undefined);
-  const [migration, setMigration] = useState<{ moved: number; failed: number } | undefined>(
-    undefined,
-  );
+  const [migration, setMigration] = useState<
+    { moved: number; unusable: number; pending: number } | undefined
+  >(undefined);
   /**
-   * v2 の実体を移送し終えるまで v3 の保存を止める（第7章 7-12）。
-   * 先に v3 を書くと、その時点で旧サムネイルが localStorage から消え、
-   * 移送に失敗した画像は復旧できなくなる。移送の確認が先、保存は後。
+   * まだ移送できていない v2 のサムネイル（第7章 7-12）。
+   * 空になるまで v3 の保存を止める。先に v3 を書くと、その時点で旧サムネイルが
+   * localStorage から消え、移送できなかった画像は復旧できなくなる。
    */
-  const [migrationSettled, setMigrationSettled] = useState(
-    Object.keys(loaded?.legacyThumbnails ?? {}).length === 0,
+  const [pendingLegacy, setPendingLegacy] = useState<Record<string, string>>(
+    loaded?.legacyThumbnails ?? {},
   );
+  const migrationSettled = Object.keys(pendingLegacy).length === 0;
 
   const markMissingKey = useCallback((key: string) => {
     // キーは `${assetId}:${kind}`。実体が取れないことが消失の観測点（第7章 7-11）。
@@ -208,31 +210,44 @@ export function AppStoreProvider({
       setPersistState(persist);
 
       const stored = persisted?.assets ?? {};
-      const legacy = Object.entries(loaded?.legacyThumbnails ?? {}).filter(
-        // 既に variant を持つものは移送済み。退避からの再試行で二重に書かない。
-        ([assetId]) => (stored[assetId]?.variants.length ?? 0) === 0,
-      );
+      const payload = loaded?.legacyPayload;
+      const remaining = { ...(loaded?.legacyThumbnails ?? {}) };
       const migrated: Record<string, AssetVariant> = {};
-      let failed = 0;
+      // データそのものが壊れていて、どうやっても移せないもの（復旧の余地が無い）。
+      let unusable = 0;
 
-      for (const [assetId, dataUri] of legacy) {
-        const blob = dataUriToBlob(dataUri);
-        // 既存サムネイルは preview 規格（長辺800px・JPEG）と一致するので作り直さない。
-        const key = variantKey(assetId, 'preview');
-        const result = blob ? await store.put(key, blob) : { ok: false as const, reason: '' };
-        if (!blob || !result.ok) {
-          failed += 1;
-          continue;
+      // 実体を保持できない環境では移送しない。移せば旧サムネイルを原本から削ることになり、
+      // リロードで両方失う。原本を残したまま、書き出しの導線を出すほうが安全。
+      const canStore = store.persistent !== false;
+
+      if (canStore && payload) {
+        for (const [assetId, dataUri] of Object.entries(remaining)) {
+          const blob = dataUriToBlob(dataUri);
+          if (!blob) {
+            unusable += 1;
+            delete remaining[assetId];
+            writeLegacyRemainder(payload, remaining);
+            continue;
+          }
+
+          // 既存サムネイルは preview 規格（長辺800px・JPEG）と一致するので作り直さない。
+          const key = variantKey(assetId, 'preview');
+          const result = await store.put(key, blob);
+          if (!result.ok) continue;
+
+          const size = await measureImage(blob);
+          migrated[assetId] = {
+            kind: 'preview',
+            key,
+            width: size?.width ?? 0,
+            height: size?.height ?? 0,
+            bytes: blob.size,
+            mimeType: blob.type || 'image/jpeg',
+          };
+          // 1件移すたびに原本から削る。使用量は増えず、中断しても残りは原本にある。
+          delete remaining[assetId];
+          writeLegacyRemainder(payload, remaining);
         }
-        const size = await measureImage(blob);
-        migrated[assetId] = {
-          kind: 'preview',
-          key,
-          width: size?.width ?? 0,
-          height: size?.height ?? 0,
-          bytes: blob.size,
-          mimeType: blob.type || 'image/jpeg',
-        };
       }
 
       if (!active) return;
@@ -245,13 +260,11 @@ export function AppStoreProvider({
         ]),
       );
       if (moved > 0) setAssets(withVariants);
-      if (moved > 0 || failed > 0) setMigration({ moved, failed });
-
-      // 全件の移送を確認できたときだけ退避を捨てる。失敗が残る間は保持し、
-      // 次回起動でも再試行できるようにする（告知だけでは復旧にならない）。
-      if (failed === 0) clearLegacyBackup();
-      // 退避を取れなかった場合は v3 を書かない。原本（v2）をそのまま残す方が安全。
-      setMigrationSettled(failed === 0 || loaded?.backedUp === true);
+      if (moved > 0 || unusable > 0 || Object.keys(remaining).length > 0) {
+        setMigration({ moved, unusable, pending: Object.keys(remaining).length });
+      }
+      // 残りが空になった時点で v3 の保存が開く。残っている間は原本（v2）のまま。
+      setPendingLegacy(remaining);
 
       // メタデータと実体の突き合わせ。記述子があるのに実体が無いものが消失。
       const keys = await store.list();
@@ -785,6 +798,27 @@ export function AppStoreProvider({
     [imageCache, refreshUsage, store],
   );
 
+  /**
+   * 移送できない画像の出口（第7章 7-12）。
+   * 保存先の空きが無い等で移せないまま止まると、それ以降なにも保存されない。
+   * 手元へ書き出してから手放せるようにして、行き止まりを作らない。
+   */
+  const exportPendingLegacyAssets = useCallback(async () => {
+    for (const [assetId, dataUri] of Object.entries(pendingLegacy)) {
+      const blob = dataUriToBlob(dataUri);
+      if (!blob) continue;
+      const extension = blob.type === 'image/png' ? 'png' : 'jpg';
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      downloadFile(`${assetId}.${extension}`, bytes, blob.type || 'image/jpeg');
+    }
+  }, [pendingLegacy]);
+
+  const discardPendingLegacyAssets = useCallback(() => {
+    // 原本から残りを落とす。この直後に保存が開き、v3 で上書きされる。
+    if (loaded?.legacyPayload) writeLegacyRemainder(loaded.legacyPayload, {});
+    setPendingLegacy({});
+  }, [loaded]);
+
   const addPortfolioWork = useCallback((work: Omit<PortfolioWork, 'id'>) => {
     setPortfolio((current) => [{ ...work, id: createId('wrk') }, ...current]);
   }, []);
@@ -811,8 +845,9 @@ export function AppStoreProvider({
       // IndexedDB が使えない環境ではメモリ実装に落ちており、リロードで消える。
       ephemeral: store.persistent === false,
       migration,
+      pendingLegacyAssetIds: Object.keys(pendingLegacy),
     }),
-    [assets, migration, missingAssetIds, persistState, quotaBytes, store],
+    [assets, migration, missingAssetIds, pendingLegacy, persistState, quotaBytes, store],
   );
 
   const value = useMemo<AppStore>(
@@ -842,6 +877,8 @@ export function AppStoreProvider({
       registerAsset,
       replaceAssetBinary,
       removeAsset,
+      exportPendingLegacyAssets,
+      discardPendingLegacyAssets,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,
@@ -873,6 +910,8 @@ export function AppStoreProvider({
       registerAsset,
       replaceAssetBinary,
       removeAsset,
+      exportPendingLegacyAssets,
+      discardPendingLegacyAssets,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,

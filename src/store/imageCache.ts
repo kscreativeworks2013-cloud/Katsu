@@ -5,14 +5,29 @@
  * 生成と破棄を同じ場所で持つ。キャッシュはアプリ起動ごとに空から始める
  * （IndexedDB 自体が永続層であり、二重の永続キャッシュは持たない）。
  *
- * 予算は件数ではなくバイト数で持つ。原寸（数MB）と preview（数十KB）が同じ
- * キャッシュに混在するため、件数では実際の消費量を代理できない。
+ * 予算は件数でもファイルサイズでもなく、**デコード後の推定サイズ**で持つ。
+ * 件数は原寸（数MB）と preview（数十KB）が混在すると消費量を代理しない。
+ * ファイルサイズも同様に外れる：2339×1654 の JPEG は 500KB でも、表示のために
+ * 展開されれば約15MB を占める。ファイル基準の予算はモバイル Safari で破綻する。
  */
 
 import type { AssetBinaryStore } from '../domain/assetStore';
 
-/** 保持する実体の合計バイト数の上限。超えた分は古い順に手放す。 */
-export const CACHE_BUDGET_BYTES = 48_000_000;
+/**
+ * 保持するデコード後サイズの合計上限。
+ * 800px の preview（約1.9MB）なら30枚強、A4横全面の原寸（約15MB）なら4枚で埋まる。
+ * モバイル Safari のタブあたりの余力を踏まえ、控えめに置く。
+ */
+export const CACHE_BUDGET_BYTES = 64_000_000;
+
+/** 寸法が分からないときの1枚あたりの見積もり。分からない側に倒して大きく見る。 */
+const UNKNOWN_DECODED_BYTES = 16_000_000;
+
+/** デコード後の占有サイズ（幅×高さ×4バイト／RGBA）。 */
+export function decodedBytes(width: number, height: number): number {
+  if (width <= 0 || height <= 0) return UNKNOWN_DECODED_BYTES;
+  return width * height * 4;
+}
 
 interface Entry {
   url: string;
@@ -23,14 +38,17 @@ interface Entry {
 }
 
 export interface ImageCache {
-  /** 実体を取り出して object URL にする。取れなければ undefined（＝消失）。 */
-  load: (key: string) => Promise<string | undefined>;
+  /**
+   * 実体を取り出して object URL にする。取れなければ undefined（＝消失）。
+   * size には variant の寸法を渡す。予算はここから求めたデコード後サイズで計算する。
+   */
+  load: (key: string, size?: { width: number; height: number }) => Promise<string | undefined>;
   /** 表示中の印。付けている間は予算を超えても破棄されない。 */
   retain: (key: string) => void;
   release: (key: string) => void;
   /** アセット削除時に、対応する object URL も捨てる。 */
   forget: (key: string) => void;
-  /** 保持している合計バイト数（テストと診断用）。 */
+  /** 保持しているデコード後サイズの合計（テストと診断用）。 */
   size: () => number;
 }
 
@@ -78,7 +96,7 @@ export function createImageCache(
   };
 
   return {
-    load: async (key) => {
+    load: async (key, size) => {
       const cached = touch(key);
       if (cached) return cached;
 
@@ -93,8 +111,10 @@ export function createImageCache(
           return undefined;
         }
         const url = URL.createObjectURL(blob);
-        entries.set(key, { url, bytes: blob.size, refs: 0, usedAt: (clock += 1) });
-        held += blob.size;
+        // 占有量はファイルサイズではなく、展開後のビットマップで測る。
+        const bytes = size ? decodedBytes(size.width, size.height) : UNKNOWN_DECODED_BYTES;
+        entries.set(key, { url, bytes, refs: 0, usedAt: (clock += 1) });
+        held += bytes;
         evict(key);
         return url;
       })().finally(() => inflight.delete(key));

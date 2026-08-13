@@ -34,7 +34,13 @@ function useCrumbs(): string[] {
  */
 export function AppShell() {
   const crumbs = useCrumbs();
-  const { projects, saveOutcome, assetStorage } = useAppStore();
+  const {
+    projects,
+    saveOutcome,
+    assetStorage,
+    exportPendingLegacyAssets,
+    discardPendingLegacyAssets,
+  } = useAppStore();
   const match = useMatch('/projects/:projectId/*');
   const project = projects.find((item) => item.id === match?.params.projectId);
 
@@ -73,11 +79,39 @@ export function AppShell() {
               <Link to="/settings">設定</Link>で対象を確認し、原寸を登録し直してください。
             </p>
           )}
-          {assetStorage.migration && assetStorage.migration.failed > 0 && (
+          {assetStorage.migration && assetStorage.migration.unusable > 0 && (
             <p className="form-error" role="alert">
-              以前の形式で保存されていた画像 {assetStorage.migration.failed}
-              件を移行できませんでした。該当の画像は登録し直してください。
+              以前の形式で保存されていた画像 {assetStorage.migration.unusable}
+              件はデータが壊れていて移行できませんでした。該当の画像は登録し直してください。
             </p>
+          )}
+          {/*
+            移送できない画像が残る間は保存が止まる（旧データを守るため）。
+            行き止まりにしないよう、書き出しと破棄の出口をここに出す（第7章 7-12）。
+          */}
+          {assetStorage.pendingLegacyAssetIds.length > 0 && (
+            <div className="form-error" role="alert">
+              <p>
+                以前の形式の画像 {assetStorage.pendingLegacyAssetIds.length}
+                件を保存先へ移せていません。移し終えるまで、変更は保存されません。
+              </p>
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button
+                  className="btn btn--small"
+                  type="button"
+                  onClick={() => void exportPendingLegacyAssets()}
+                >
+                  画像を書き出す
+                </button>
+                <button
+                  className="btn btn--ghost btn--small"
+                  type="button"
+                  onClick={discardPendingLegacyAssets}
+                >
+                  破棄して続行する
+                </button>
+              </div>
+            </div>
           )}
           {/* 永続化の状態そのものは設定画面に常時出す。ここは「使えない」ときだけ出す。 */}
           {assetStorage.ephemeral && (

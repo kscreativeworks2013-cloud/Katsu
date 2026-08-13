@@ -52,8 +52,14 @@ export interface AssetStorageState {
   missingAssetIds: string[];
   /** IndexedDB が使えず、リロードで消える状態か。 */
   ephemeral: boolean;
-  /** v2 からの移行結果。移った件数と、移せずに失われた件数。 */
-  migration?: { moved: number; failed: number };
+  /**
+   * v2 からの移行結果（第7章 7-12）。
+   * moved は移せた件数、unusable はデータが壊れていて移せなかった件数、
+   * pending は保存先の空きが無い等で移せず、原本に残っている件数。
+   */
+  migration?: { moved: number; unusable: number; pending: number };
+  /** 移送できず原本に残っている画像。空になるまで新しい保存は行われない。 */
+  pendingLegacyAssetIds: string[];
 }
 
 /** 実体つきでアセットを登録するときの入力（第7章 7-6）。 */
@@ -115,6 +121,11 @@ export interface AppStore {
   ) => Promise<{ rejected?: string }>;
   /** アセットを削除する。実体（原寸・preview）もまとめて消す。 */
   removeAsset: (assetId: string) => void;
+
+  /** 移送できない画像をファイルとして書き出す（第7章 7-12 の出口）。 */
+  exportPendingLegacyAssets: () => Promise<void>;
+  /** 移送を諦めて先へ進む。残りは破棄され、以降は通常どおり保存される。 */
+  discardPendingLegacyAssets: () => void;
   addPortfolioWork: (work: Omit<PortfolioWork, 'id'>) => void;
   updatePortfolioWork: (workId: string, patch: Partial<PortfolioWork>) => void;
   removePortfolioWork: (workId: string) => void;
@@ -149,10 +160,16 @@ export function useProject(projectId: string | undefined): {
  * preview を優先し、無ければ原寸を使う。取れない場合は undefined を返し、
  * 呼び出し側はプレースホルダに落とす（消失の表示は assetStorage.missingAssetIds が担う）。
  */
-export function useAssetImage(asset: Asset | undefined): string | undefined {
+export function useAssetImage(
+  asset: Asset | undefined,
+  /** 大きく表示するスロットか。true なら原寸を優先する（第7章 7-7）。 */
+  large = false,
+): string | undefined {
   const { imageCache } = useAppStore();
-  const variant = pickVariant(asset, 'screen');
+  const variant = pickVariant(asset, large ? 'screen-large' : 'screen');
   const key = variant?.key;
+  const width = variant?.width ?? 0;
+  const height = variant?.height ?? 0;
   // キーと一緒に持つ。参照が変わった直後に前の画像を出さないため。
   const [loaded, setLoaded] = useState<{ key: string; url: string } | null>(null);
 
@@ -160,7 +177,8 @@ export function useAssetImage(asset: Asset | undefined): string | undefined {
     if (!key) return;
     let active = true;
     let retained = false;
-    void imageCache.load(key).then((url) => {
+    // 寸法を渡すのは、キャッシュの予算がデコード後サイズで計算されるため（第7章 7-7）。
+    void imageCache.load(key, { width, height }).then((url) => {
       if (!active || !url) return;
       imageCache.retain(key);
       retained = true;
@@ -171,7 +189,7 @@ export function useAssetImage(asset: Asset | undefined): string | undefined {
       // 掴んだ分だけ返す。掴めていないものを release すると他の表示を巻き添えにする。
       if (retained) imageCache.release(key);
     };
-  }, [imageCache, key]);
+  }, [height, imageCache, key, width]);
 
   return loaded && loaded.key === key ? loaded.url : undefined;
 }

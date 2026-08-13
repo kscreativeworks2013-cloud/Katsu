@@ -145,8 +145,10 @@ export function SettingsScreen() {
         {assetStorage.migration && (
           <p className="muted" style={{ marginTop: 10 }}>
             以前の形式からの移行：{assetStorage.migration.moved}件を移しました
-            {assetStorage.migration.failed > 0 &&
-              `／${assetStorage.migration.failed}件は移行できませんでした（登録し直してください）`}
+            {assetStorage.migration.unusable > 0 &&
+              `／${assetStorage.migration.unusable}件はデータが壊れていて移行できませんでした（登録し直してください）`}
+            {assetStorage.migration.pending > 0 &&
+              `／${assetStorage.migration.pending}件は保存先へ移せていません（上部の案内から書き出すか破棄してください）`}
           </p>
         )}
 

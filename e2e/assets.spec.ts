@@ -81,35 +81,74 @@ function legacyState(thumbnail: string): string {
 }
 
 test.describe('v2 からの移行', () => {
-  test('は旧サムネイルを実体ストアへ移し、退避を片付ける', async ({ page }) => {
-    await page.addInitScript(([key, payload]) => localStorage.setItem(key, payload), [
-      'lbvpos.state',
-      legacyState(LEGACY_THUMBNAIL),
-    ] as const);
+  const seed = (payload: string) => ({ key: 'lbvpos.state', payload });
+
+  test('は旧サムネイルを実体ストアへ移し、原本を v3 へ進める', async ({ page }) => {
+    await page.addInitScript(
+      ({ key, payload }) => localStorage.setItem(key, payload),
+      seed(legacyState(LEGACY_THUMBNAIL)),
+    );
 
     await page.goto('/settings');
 
     await expect(page.getByText(/1件を移しました/)).toBeVisible();
     await expect(page.getByText(/表示用のみ 1件/)).toBeVisible();
-    // 全件移せたので退避は消える。ここで初めて旧データを手放す。
+    // 全件移せたので保存が開き、原本は v3 になる。
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('lbvpos.state.v2-backup')))
-      .toBeNull();
+      .poll(() =>
+        page.evaluate(() => {
+          const raw = localStorage.getItem('lbvpos.state');
+          return raw ? (JSON.parse(raw) as { version: number }).version : null;
+        }),
+      )
+      .toBe(3);
   });
 
-  test('は移せなかった画像を退避したまま残す（保存で上書きしない）', async ({ page }) => {
-    // 壊れたペイロード（data URI として読めない）＝移送できない画像。
-    await page.addInitScript(([key, payload]) => localStorage.setItem(key, payload), [
-      'lbvpos.state',
-      legacyState('not-a-data-uri'),
-    ] as const);
+  test('は壊れた画像を移行できなかったものとして報告する', async ({ page }) => {
+    // data URI として読めない＝復旧の余地が無いデータ。
+    await page.addInitScript(
+      ({ key, payload }) => localStorage.setItem(key, payload),
+      seed(legacyState('not-a-data-uri')),
+    );
 
     await page.goto('/settings');
 
-    await expect(page.getByText(/1件は移行できませんでした/)).toBeVisible();
-    // 退避は残す。告知だけで終わらせず、次回起動で再試行できる状態にしておく。
-    const backup = await page.evaluate(() => localStorage.getItem('lbvpos.state.v2-backup'));
-    expect(backup).toContain('not-a-data-uri');
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'データが壊れていて移行できませんでした' }),
+    ).toBeVisible();
+  });
+
+  test('は保存先へ移せないとき、保存を止めて書き出しと破棄の出口を出す', async ({ page }) => {
+    // 保存先の空きが無い状態。原本を消さずに止まることを確かめる。
+    await page.addInitScript(() => {
+      IDBObjectStore.prototype.put = () => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      };
+    });
+    await page.addInitScript(
+      ({ key, payload }) => localStorage.setItem(key, payload),
+      seed(legacyState(LEGACY_THUMBNAIL)),
+    );
+
+    await page.goto('/settings');
+
+    const notice = page.getByRole('alert').filter({ hasText: '保存先へ移せていません' });
+    await expect(notice).toBeVisible();
+    // 原本は v2 のまま。旧サムネイルは失われていない。
+    const before = await page.evaluate(() => localStorage.getItem('lbvpos.state'));
+    expect(before).toContain('"version":2');
+    expect(before).toContain('data:image/jpeg');
+
+    // 出口：破棄して続行すると保存が開き、v3 へ進む。
+    await notice.getByRole('button', { name: '破棄して続行する' }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const raw = localStorage.getItem('lbvpos.state');
+          return raw ? (JSON.parse(raw) as { version: number }).version : null;
+        }),
+      )
+      .toBe(3);
   });
 });
 
