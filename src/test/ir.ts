@@ -6,7 +6,14 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { defaultSettings, seedPortfolio, seedProjects, seedWorkspaces } from '../data/fixtures';
 import { generateProposalBody } from '../data/proposalBody';
-import type { Asset, AssetVariant, Project, Provenance, Workspace } from '../data/types';
+import type {
+  Asset,
+  AssetVariant,
+  PortfolioWork,
+  Project,
+  Provenance,
+  Workspace,
+} from '../data/types';
 import {
   createMemoryBinaryStore,
   variantKey,
@@ -87,6 +94,7 @@ export function buildTestIR({
   workspace = workspaceWithBody(),
   provenance = {} as Provenance,
   assets = {} as Record<string, Asset>,
+  portfolio = seedPortfolio,
   lang = 'ja' as Lang,
   builtAt = new Date('2026-08-12T09:30:00.000Z'),
 }: {
@@ -94,6 +102,7 @@ export function buildTestIR({
   workspace?: Workspace;
   provenance?: Provenance;
   assets?: Record<string, Asset>;
+  portfolio?: PortfolioWork[];
   lang?: Lang;
   builtAt?: Date;
 } = {}): ProposalIR {
@@ -101,7 +110,7 @@ export function buildTestIR({
     project,
     workspace,
     provenance,
-    portfolio: seedPortfolio,
+    portfolio,
     assets,
     lang,
     builtAt,

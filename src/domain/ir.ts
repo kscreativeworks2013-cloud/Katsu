@@ -264,7 +264,8 @@ function imageBlocks(sectionId: string, input: BuildIRInput, warnings: IRWarning
 
       // 原寸はあるが、このスロットの配置幅に対して足りない（第7章 7-2／7-3）。
       // 配置幅は版面定義から導く（第8章 8-4）。定数を手で並べると版面と判定がずれる。
-      const printWidthMm = slotWidthMm(slot.id);
+      // 配置幅はその面の実際の面付けから決まる。枠の数が変われば幅も変わる（第8章 8-4）。
+      const printWidthMm = slotWidthMm(slot.id, images.length);
       const needed = requiredPixels(printWidthMm);
       if (original && original.width > 0 && original.width < needed) {
         // どの面の話かは章名で言う。スロット名（キービジュアル）だけだと、

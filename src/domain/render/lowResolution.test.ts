@@ -63,7 +63,9 @@ describe('low-resolution 警告', () => {
     });
     const summary = warningSummary(ir).filter((line) => line.includes('印刷解像度'));
 
-    expect(summary).toHaveLength(3);
+    // 表紙・ブランド分析・撮影コンセプト・ムードボードの4面。タイルが1枚だけの面では
+    // 枠が面いっぱいに広がるので、タイルにも不足が出る（配置幅は面付けから決まる）。
+    expect(summary).toHaveLength(4);
     // どの面の話かはスロット名ではなく章名で言う（同名の枠を持つ表紙を疑わせない）。
     expect(summary.filter((line) => line.includes('（撮影コンセプト）'))).toHaveLength(1);
     expect(summary.filter((line) => line.includes('（ブランド分析）'))).toHaveLength(1);

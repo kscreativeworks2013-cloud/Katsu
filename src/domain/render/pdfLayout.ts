@@ -29,9 +29,16 @@ import {
   ADOPTED_LAYOUT,
   MAX_MEASURE_CHARS,
   MIN_COLUMN_ITEMS,
+  bandCells,
+  cellSize,
+  gridCells,
   matPadding,
+  pageMetrics,
   safeMargin,
-  tileGrid,
+  shotArea,
+  shotOptions,
+  tileArea,
+  tileOptions,
   toPoints,
   type LayoutSpec,
   type PageFormat,
@@ -47,9 +54,6 @@ import { checklistSummary, warningSummary } from './types';
  * この既定ではなく指定した点を枠の中心に置く（第8章 8-7）。
  */
 const CROP_FROM_BOTTOM = 0.78;
-
-/** タイルが横に伸びすぎると人物写真が帯になる。1枠の縦横比の上限。 */
-const MAX_CELL_ASPECT = 1.5;
 
 /** タイルの境界線の太さ（pt）。素材が高明度でも枠の下端が消えないための最小限。 */
 const TILE_EDGE_PT = 0.6;
@@ -469,14 +473,8 @@ export async function renderLayoutPdf(
   const margin = safeMargin(format);
   const sheet = () => new Sheet(doc, fonts, format, spec, palette);
   const headingSize = spec.type.heading * format.heightPt;
-  const captionRatio = spec.type.caption * 1.9;
-  /** 見出しの下端から本文・画像までの間隔。 */
-  const afterHeading = 0.035;
-  /**
-   * 面の頭に置く見出しのベースライン。安全マージンは字面ではなくフォントの
-   * アセンダ枠で見る（1mm でも外に出れば、断裁のばらつきで削れる可能性が残る）。
-   */
-  const headTop = margin.y + spec.type.heading * 1.2;
+  // 面の寸法は版面定義から取る。ここに数値を置くと、配置幅の申告とずれる（第8章 8-4）。
+  const { captionRatio, afterHeading, headTop } = pageMetrics(spec, format);
 
   // 同じアセットが複数の面に出るので、埋め込みは1回にまとめる。
   const embedded = new Map<string, PDFImage | undefined>();
@@ -736,10 +734,9 @@ export async function renderLayoutPdf(
       spec.band.max,
     );
 
-    const gap = 0.008;
-    const cellW = shown.length > 0 ? (1 - gap * (shown.length - 1)) / shown.length : 1;
+    const cells = bandCells(shown.length, band, spec, format);
     for (let index = 0; index < shown.length; index += 1) {
-      const cell: Rect = { x: index * (cellW + gap), y: 0, w: cellW, h: band };
+      const cell = cells[index];
       const image = await imageFor(shown[index]);
       if (image) page.cover(cell, image, shown[index].focus);
       else page.placeholder(cell);
@@ -747,7 +744,7 @@ export async function renderLayoutPdf(
       // キャプションは枠に寄せつつ、面の端に近い枠では版面の内側へ寄せ直す。
       const capX = clamp(cell.x + 0.006, margin.x, 1 - margin.x);
       page.line(
-        page.clip(caption(shown[index]), Math.min(cell.x + cellW, 1 - margin.x) - capX),
+        page.clip(caption(shown[index]), Math.min(cell.x + cell.w, 1 - margin.x) - capX),
         { x: capX, y: band + captionRatio * 0.72 },
         { color: palette.muted },
       );
@@ -775,41 +772,33 @@ export async function renderLayoutPdf(
    * 左端と列グリッドは面の中で一定に保つ（第8章 8-6）。
    */
   async function renderTiles(title: string, blocks: ImageBlock[]): Promise<void> {
-    const { cols, rows, gap } = spec.moodboard;
-    const perPage = cols * rows;
+    const options = tileOptions(spec, format);
+    const area = tileArea(spec, format);
+    const pad = matPadding(format);
+    const perPage = options.cols * options.rows;
+    // 枠寸法は章全体で1つ。面ごとに残数から出すと、同じ枠が面によって大きさを変える。
+    const cell = cellSize(blocks.length, area, options);
 
     for (let start = 0; start < blocks.length; start += perPage) {
       const page = sheet();
-      const head = headTop;
-      // 台紙は安全マージンに揃える（版面とも断ち落としとも違う位置に線を作らない）。
-      // タイル領域だけに敷き、ページ全体の紙色は変えない。
-      // 台紙は見出しより先に置く（後から敷くと見出しに重なる）。
-      const mat: Rect = {
-        x: margin.x,
-        y: head + afterHeading,
-        w: 1 - margin.x * 2,
-        h: 1 - head - afterHeading - margin.y,
-      };
-      page.fill(mat, palette.mat);
-      page.line(title, { x: margin.x, y: head }, { size: page.size('heading') });
-
-      // タイルは台紙の内側へ入る。台紙が縁として成立する最小限の余白。
-      const pad = matPadding(format);
-      const area: Rect = {
-        x: mat.x + pad.x,
-        y: mat.y + pad.y,
-        w: mat.w - pad.x * 2,
-        h: mat.h - pad.y * 2,
-      };
-
       const onPage = Math.min(perPage, blocks.length - start);
-      const cells = tileGrid(onPage, area, {
-        cols,
-        gap,
-        maxAspect: MAX_CELL_ASPECT,
-        captionRatio,
-        format,
-      });
+      const cells = gridCells(onPage, area, cell, options);
+
+      // 台紙はタイル群の実寸に合わせる（残数の少ない面で右側が大きく空かない）。
+      // 台紙は見出しより先に置く（後から敷くと見出しに重なる）。
+      const right = Math.max(...cells.map((rect) => rect.x + rect.w));
+      const bottom = Math.max(...cells.map((rect) => rect.y + rect.h));
+      page.fill(
+        {
+          x: area.x - pad.x,
+          y: area.y - pad.y,
+          w: right - area.x + pad.x * 2,
+          h: bottom - area.y + pad.y * 2,
+        },
+        palette.mat,
+      );
+      page.line(title, { x: margin.x, y: headTop }, { size: page.size('heading') });
+
       for (let index = 0; index < onPage; index += 1) {
         await place(page, cells[index], blocks[start + index], { edge: true });
       }
@@ -825,49 +814,25 @@ export async function renderLayoutPdf(
     blocks: ImageBlock[],
     lines: string[],
   ): Promise<void> {
-    const { perPage, rows, strip } = spec.shots;
-    const gap = 0.006;
-    // 枠の幅は常に perPage 分割。カットが少ない面でも枠を広げない
-    // （横に伸ばすと縦位置のカットが帯になり、絵コンテとして読めなくなる）。
-    const cellW = (1 - margin.x * 2 - gap * (perPage - 1)) / perPage;
+    // 絵コンテもタイル面と同じ格子の規則で並べる（6カットは3+3で欠けが出ない）。
+    const options = shotOptions(spec, format);
+    const area = shotArea(blocks.length, spec, format);
+    const cell = cellSize(blocks.length, area, options);
     const bodyW = 1 - margin.x * 2;
-    const onePage = perPage * rows;
+    const onePage = options.cols * options.rows;
     let rest = lines;
 
     for (let start = 0; start < blocks.length; start += onePage) {
       const page = sheet();
-      const head = headTop;
-      page.line(title, { x: margin.x, y: head }, { size: page.size('heading') });
+      page.line(title, { x: margin.x, y: headTop }, { size: page.size('heading') });
 
-      const top = head + afterHeading;
       const onPage = Math.min(onePage, blocks.length - start);
-      // 半端なカットは次の段へ送り、面をまたがせない（2枚だけの面を作らない）。
-      const usedRows = Math.ceil(onPage / perPage);
-
-      const bodyH = page.columnHeight(rest, bodyW, spec.dense.gap);
-      // 仕様が短い面では帯を伸ばして下部の空きを詰める。上限は版面定義（段数ぶん緩める）。
-      const band = clamp(
-        1 - margin.y - bodyH - top - 0.02,
-        strip.min,
-        strip.max * (usedRows > 1 ? 1.4 : 1),
-      );
-      const cellH = (band - gap * (usedRows - 1)) / usedRows;
-
+      const cells = gridCells(onPage, area, cell, options);
       for (let index = 0; index < onPage; index += 1) {
-        const row = Math.floor(index / perPage);
-        await place(
-          page,
-          {
-            x: margin.x + (index - row * perPage) * (cellW + gap),
-            y: top + row * (cellH + gap),
-            w: cellW,
-            h: cellH,
-          },
-          blocks[start + index],
-        );
+        await place(page, cells[index], blocks[start + index]);
       }
 
-      const bodyTop = top + band + 0.02;
+      const bodyTop = Math.max(...cells.map((rect) => rect.y + rect.h)) + 0.02;
       rest = page.columns(
         rest,
         { x: margin.x, y: bodyTop, w: bodyW, h: 1 - bodyTop - margin.y },

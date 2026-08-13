@@ -157,87 +157,224 @@ export const ADOPTED_LAYOUT: LayoutSpec = {
   type: { title: 0.055, heading: 0.03, body: 0.0185, caption: 0.0125 },
 };
 
+/** 枠の縦横比（横/縦）の上限。超えて横に伸ばすと縦位置の人物が帯になる。 */
+export const MAX_CELL_ASPECT = 1.5;
+
 /**
- * スロットの配置幅（判型に対する比率）を版面定義から導く（第8章 8-4）。
- *
- * 印刷解像度の判定（第7章 7-2）はここから mm に展開した値で行う。手で並べた定数だと、
- * 版面を動かしたときに判定だけが古いまま残る。版面が真実の側であることを崩さない。
+ * 面に共通の寸法。レンダラと配置幅の導出が同じ値を読むための一次情報（第8章 8-4）。
+ * ここを唯一の出所にしないと、「警告が言う配置幅」と「実際に置いた幅」がずれる。
  */
-export function slotWidthRatio(slotId: string, spec: LayoutSpec = ADOPTED_LAYOUT): number {
-  const inner =
-    1 - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm - SAFE_MARGIN_MM / A4_LANDSCAPE.widthMm;
-  const tile = (cols: number, gap: number): number => (inner - gap * (cols - 1)) / cols;
-  // タイルは台紙の内側に入るぶんだけ狭い。判定はこの実寸で行う（第8章 8-6）。
-  const matTile = (cols: number, gap: number): number =>
-    (inner - (MAT_PADDING_MM / A4_LANDSCAPE.widthMm) * 2 - gap * (cols - 1)) / cols;
-
-  switch (slotId) {
-    // 表紙とコンセプトは全面ブリード（余白を取らない）。
-    case 'cover-key':
-    case 'concept-key':
-      return 1;
-    // 画像帯に2枚並ぶ面。
-    case 'brand-mood':
-    case 'works-grid':
-      return (1 - 0.008) / 2;
-    case 'competitor-refs':
-      return (1 - 0.008 * 2) / 3;
-    case 'mood-tiles':
-      return matTile(spec.moodboard.cols, spec.moodboard.gap);
-    case 'shot-frames':
-      return tile(spec.shots.perPage, 0.006);
-    case 'cover-logo':
-      return 0.2;
-    default:
-      return tile(3, 0.01);
-  }
+export function pageMetrics(
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+) {
+  const margin = safeMargin(format);
+  return {
+    margin,
+    /** 枠の下にキャプションのために残す高さ。 */
+    captionRatio: spec.type.caption * 1.9,
+    /** 見出しの下端から本文・画像までの間隔。 */
+    afterHeading: 0.035,
+    /**
+     * 面の頭に置く見出しのベースライン。安全マージンは字面ではなくフォントの
+     * アセンダ枠で見る（1mm でも外に出れば、断裁のばらつきで削れる）。
+     */
+    headTop: margin.y + spec.type.heading * 1.2,
+    /** 画像帯の枠間。 */
+    bandGap: 0.008,
+    /** フィルムストリップの枠間。 */
+    shotGap: 0.006,
+  };
 }
 
-/** スロットの配置幅（mm）。判定はこの実寸で行う。 */
-export function slotWidthMm(slotId: string, format: PageFormat = A4_LANDSCAPE): number {
-  return widthToMm(slotWidthRatio(slotId), format);
-}
-
-export interface TileGridOptions {
-  /** 1行に並べる最大枚数。枚数がこれを下回る面では、その枚数が列数になる。 */
+export interface GridOptions {
+  /** 1行に並べる最大枚数。 */
   cols: number;
-  /** タイル間の隙間（幅比率）。行間にも同じ値を使う。 */
+  /** 1面に積む最大の段数。 */
+  rows: number;
   gap: number;
-  /** 枠の縦横比（横/縦）の上限。超えて横に伸ばすと縦位置の人物が帯になる。 */
   maxAspect: number;
-  /** 枠のうちキャプションに残す高さ（高さ比率）。縦横比は画像部分で判定する。 */
   captionRatio: number;
   format: PageFormat;
 }
 
 /**
- * タイル面の格子（第8章 8-6）。
- *
- * **列グリッドと左端は面の中で一定に保つ。** 残数に応じて変えてよいのは面全体の列数だけで、
- * 半端な行だけを広げたり中央に寄せたりしない（上段と下段で幅も左端も違う面になる）。
- *
- * 列数は「段数を増やさずに、行の欠けが最も少なくなる数」を選ぶ。
- * 6枚→3+3、5枚→3+2、4枚→2+2、2枚→2。4枚を3+1にすると、最終面の台紙が
- * 右三分の二だけ空く（実測で発生した）。
+ * その面に置く列数（第8章 8-6）。
+ * 「段数を増やさずに、行の欠けが最も少なくなる数」を選ぶ。
+ * 6枚→3+3、5枚→3+2、4枚→2+2、2枚→2。4枚を3+1にすると最終面の右が大きく空く。
  */
-export function tileGrid(count: number, area: Rect, options: TileGridOptions): Rect[] {
-  const { cols, gap, maxAspect, captionRatio, format } = options;
-  const rows = Math.max(1, Math.ceil(Math.max(1, count) / cols));
-  const usedCols = Math.max(1, Math.min(cols, Math.ceil(count / rows)));
-  const usedRows = Math.max(1, Math.ceil(count / usedCols));
+export function gridColumns(count: number, cols: number): number {
+  if (count <= 0) return 1;
+  const rows = Math.max(1, Math.ceil(count / cols));
+  return Math.max(1, Math.min(cols, Math.ceil(count / rows)));
+}
 
-  const cellH = (area.h - gap * (usedRows - 1)) / usedRows;
+/**
+ * 章全体で1つの枠寸法を決める（第8章 8-6）。
+ * 面ごとに残数から寸法を出すと、同じ章の同じ枠が面によって大きさを変える
+ * （実測：1面目 83mm・2面目 106mm）。寸法は**最初の面の並び**で決め、
+ * 以降の面は枚数が減っても同じ寸法を使う。
+ */
+export function cellSize(
+  total: number,
+  area: Rect,
+  options: GridOptions,
+): { w: number; h: number } {
+  const { cols, rows, gap, maxAspect, captionRatio, format } = options;
+  const first = Math.max(1, Math.min(total, cols * rows));
+  const usedCols = gridColumns(first, cols);
+  const usedRows = Math.max(1, Math.ceil(first / usedCols));
+
+  const h = (area.h - gap * (usedRows - 1)) / usedRows;
   // 縦横比の上限は画像部分（キャプションを除いた高さ）で見る。比率は判型で実寸に直す。
-  const capped = ((cellH - captionRatio) * maxAspect * format.heightPt) / format.widthPt;
-  const cellW = Math.min((area.w - gap * (usedCols - 1)) / usedCols, capped);
+  const capped = ((h - captionRatio) * maxAspect * format.heightPt) / format.widthPt;
+  return { w: Math.min((area.w - gap * (usedCols - 1)) / usedCols, capped), h };
+}
 
+/**
+ * その面の枠の位置。**左端と列グリッドは面の中で一定に保つ。**
+ * 半端な行だけを広げたり中央に寄せたりしない（上段と下段で幅も左端も違う面になる）。
+ */
+export function gridCells(
+  count: number,
+  area: Rect,
+  cell: { w: number; h: number },
+  options: GridOptions,
+): Rect[] {
+  const usedCols = gridColumns(count, options.cols);
   return Array.from({ length: count }, (_, index) => {
     const row = Math.floor(index / usedCols);
     return {
-      x: area.x + (index - row * usedCols) * (cellW + gap),
-      y: area.y + row * (cellH + gap),
-      w: cellW,
-      h: cellH,
+      x: area.x + (index - row * usedCols) * (cell.w + options.gap),
+      y: area.y + row * (cell.h + options.gap),
+      w: cell.w,
+      h: cell.h,
     };
   });
+}
+
+/** タイル面（ムードボード）の格子の条件。 */
+export function tileOptions(
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): GridOptions {
+  return {
+    cols: spec.moodboard.cols,
+    rows: spec.moodboard.rows,
+    gap: spec.moodboard.gap,
+    maxAspect: MAX_CELL_ASPECT,
+    captionRatio: pageMetrics(spec, format).captionRatio,
+    format,
+  };
+}
+
+/** タイルを置ける領域（台紙の内側）。台紙自身はタイル群の実寸に合わせて縮める。 */
+export function tileArea(
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): Rect {
+  const { margin, headTop, afterHeading } = pageMetrics(spec, format);
+  const pad = matPadding(format);
+  const top = headTop + afterHeading;
+  return {
+    x: margin.x + pad.x,
+    y: top + pad.y,
+    w: 1 - margin.x * 2 - pad.x * 2,
+    h: 1 - top - margin.y - pad.y * 2,
+  };
+}
+
+/** フィルムストリップの格子の条件。 */
+export function shotOptions(
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): GridOptions {
+  return {
+    cols: spec.shots.perPage,
+    rows: spec.shots.rows,
+    gap: pageMetrics(spec, format).shotGap,
+    maxAspect: MAX_CELL_ASPECT,
+    captionRatio: pageMetrics(spec, format).captionRatio,
+    format,
+  };
+}
+
+/**
+ * フィルムストリップを置ける領域。
+ * 高さは**段数だけ**から決める（本文の量で動かさない）。本文量に連動させると、
+ * 配置幅が組版の結果に依存して先に決められなくなり、解像度の判定が版面とずれる。
+ */
+export function shotArea(
+  total: number,
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): Rect {
+  const { margin, headTop, afterHeading } = pageMetrics(spec, format);
+  const first = Math.max(1, Math.min(total, spec.shots.perPage * spec.shots.rows));
+  const usedRows = Math.max(1, Math.ceil(first / gridColumns(first, spec.shots.perPage)));
+  const top = headTop + afterHeading;
+  return {
+    x: margin.x,
+    y: top,
+    w: 1 - margin.x * 2,
+    h: usedRows > 1 ? spec.shots.strip.max * 1.1 : spec.shots.strip.max,
+  };
+}
+
+/** 画像帯（ブランド分析・競合分析・実績）の枠。最大3枠を面幅に等分する。 */
+export function bandCells(
+  count: number,
+  band: number,
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): Rect[] {
+  const gap = pageMetrics(spec, format).bandGap;
+  const shown = Math.max(1, Math.min(count, 3));
+  const w = (1 - gap * (shown - 1)) / shown;
+  return Array.from({ length: shown }, (_, index) => ({
+    x: index * (w + gap),
+    y: 0,
+    w,
+    h: band,
+  }));
+}
+
+/**
+ * スロットに置く枠の幅（判型に対する比率）を、**その面での実際の面付け**から導く。
+ *
+ * 枠種ごとに単一の定数を返していたときは、同じ枠でも面付けが変わると値が古くなった
+ * （実測：実績は147mmと申告して97mmで置き、ムードボードは2列の面でも83mmと申告していた）。
+ * 配置幅は列数と領域から決まるので、レンダラが使うのと同じ関数から取る。
+ */
+export function slotWidthRatio(
+  slotId: string,
+  count = 1,
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): number {
+  switch (slotId) {
+    // 表紙とコンセプトは全面ブリード（余白を取らない）。
+    case 'cover-key':
+    case 'concept-key':
+      return 1;
+    case 'cover-logo':
+      return 0.12;
+    case 'mood-tiles':
+      return cellSize(count, tileArea(spec, format), tileOptions(spec, format)).w;
+    case 'shot-frames':
+      return cellSize(count, shotArea(count, spec, format), shotOptions(spec, format)).w;
+    // 画像帯に並ぶ面（ブランド分析・競合分析・実績）。
+    default:
+      return bandCells(count, 0.5, spec, format)[0].w;
+  }
+}
+
+/** スロットの配置幅（mm）。印刷解像度の判定はこの実寸で行う。 */
+export function slotWidthMm(
+  slotId: string,
+  count = 1,
+  spec: LayoutSpec = ADOPTED_LAYOUT,
+  format: PageFormat = A4_LANDSCAPE,
+): number {
+  return widthToMm(slotWidthRatio(slotId, count, spec, format), format);
 }
