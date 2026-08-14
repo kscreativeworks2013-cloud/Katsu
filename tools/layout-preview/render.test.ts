@@ -317,7 +317,15 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
         moodboard,
         shots,
         logoAssetId: 'ast-logo',
-        // 競合の3枠は未登録のまま残す（未登録時の版面を確かめるため）。
+        /*
+         * 競合の3枠はサンプルとして実績の素材を流用する（実データでは別素材）。
+         * 図の面でも参照画像を落とさないことを実寸で見るために埋めている。
+         * 「枠が全て未登録の章はテキストで組む」経路は単体テスト側で固定済み。
+         */
+        competitors: base.competitors.map((competitor, index) => ({
+          ...competitor,
+          assetId: forWorks[index] ? idOf(forWorks[index]) : null,
+        })),
         // 表紙は 3:2 の横位置を帯へ流すため、既定の上寄せでも帽子の天面が切れる。
         // スロット単位の切り出し指定（第8章 8-7）で上端を残す。
         crops: { 'cover-key-mood-0': { x: 0.5, y: 0 } },

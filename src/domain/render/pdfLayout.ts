@@ -569,9 +569,11 @@ export async function renderLayoutPdf(
     // 枠線は素材によらず一律に引く（素材ごとに処理を変えない）。
     if (options.edge) page.frame(art, palette.matEdge);
     // キャプションは枠の下に置き、次の枠と重ならない高さを確保しておく。
+    // 枠が断ち落としでも、読ませる要素は安全マージンの内側へ寄せ直す。
+    const capX = clamp(rect.x, margin.x, 1 - margin.x);
     page.line(
-      page.clip(caption(block), rect.w),
-      { x: rect.x, y: art.y + art.h + captionRatio * 0.72 },
+      page.clip(caption(block), Math.min(rect.x + rect.w, 1 - margin.x) - capX),
+      { x: capX, y: art.y + art.h + captionRatio * 0.72 },
       { color: palette.muted },
     );
   }
@@ -729,7 +731,7 @@ export async function renderLayoutPdf(
     // 位置関係の図を持つ章は、図を主にした面で組む（競合分析）。
     if (map) {
       flushDense();
-      renderMap(section.title, map, lines);
+      await renderMap(section.title, map, lines, shown);
       continue;
     }
     if (shown.length > 0 && section.id === 'moodboard') {
@@ -839,12 +841,19 @@ export async function renderLayoutPdf(
    * 競合分析は「どこが空いているか」を見る章なので、位置関係を図で示し、
    * 本文はその補助として右に置く。テキストだけの面にしない。
    */
-  function renderMap(title: string, map: MapBlock, lines: string[]): void {
+  async function renderMap(
+    title: string,
+    map: MapBlock,
+    lines: string[],
+    blocks: ImageBlock[],
+  ): Promise<void> {
     const page = sheet();
     page.line(title, { x: margin.x, y: headTop }, { size: page.size('heading') });
 
     const top = headTop + afterHeading;
-    const bottom = 1 - margin.y;
+    // 参照画像があれば面の下に並べる。図の面だからと落とすと、登録した画像が黙って消える。
+    const strip = blocks.length > 0 ? 0.26 : 0;
+    const bottom = 1 - margin.y - strip;
     // 図は左 54%。右は本文（測度は1段の上限に収まる）。
     const plot: Rect = {
       x: margin.x + 0.03,
@@ -888,6 +897,13 @@ export async function renderLayoutPdf(
       spec.dense.gap,
     );
     if (rest.length > 0) denseQueue.push({ title: `${title}（続き）`, lines: rest });
+
+    if (blocks.length > 0) {
+      const cells = bandCells(blocks.length, strip - 0.02, spec, format);
+      for (let index = 0; index < blocks.length; index += 1) {
+        await place(page, { ...cells[index], y: bottom + 0.02 }, blocks[index]);
+      }
+    }
   }
 
   /**
