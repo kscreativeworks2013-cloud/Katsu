@@ -377,7 +377,11 @@ function inject(ir: ProposalIR): ProposalIR {
   };
 }
 
-async function write(name: string, grid?: { tiles: number; cuts: number }): Promise<void> {
+async function write(
+  name: string,
+  grid?: { tiles: number; cuts: number },
+  lang: 'ja' | 'en' = 'ja',
+): Promise<void> {
   const project = seedProjects[0];
   const { workspace, assets, portfolio } = projectWithImages(grid);
   const fontBytes = loadTestFont();
@@ -389,7 +393,7 @@ async function write(name: string, grid?: { tiles: number; cuts: number }): Prom
       provenance: {},
       portfolio,
       assets,
-      lang: 'ja',
+      lang,
       builtAt: new Date('2026-08-13T00:00:00.000Z'),
     }),
   );
@@ -416,5 +420,13 @@ describe('版面案の書き出し', () => {
 
   it('は再配分確認用（6点／6カット）の PDF を書き出す', async () => {
     await write('grid-6x6', { tiles: 6, cuts: 6 });
+  });
+
+  /*
+   * 英語版。和文フォントの埋め込みは IR の中身で決まる（第9章 工程00-b）ので、
+   * 「英語版はどれだけ軽いか」は実際に出してみないと分からない。
+   */
+  it('は英語版の PDF を書き出す', async () => {
+    await write('adopted-en', undefined, 'en');
   });
 });

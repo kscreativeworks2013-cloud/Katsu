@@ -47,6 +47,7 @@ import {
   type Rect,
 } from './layout';
 import { splitRuns } from './textRuns';
+import { irTexts, missingGlyphMessage, missingGlyphs, needsCjkFont } from './fontCoverage';
 import { themeRgb } from './theme';
 import { checklistSummary, warningSummary } from './types';
 
@@ -60,11 +61,60 @@ const CROP_FROM_BOTTOM = 0.78;
 /** タイルの境界線の太さ（pt）。素材が高明度でも枠の下端が消えないための最小限。 */
 const TILE_EDGE_PT = 0.6;
 
-const ORIGIN_LABEL: Record<string, string> = {
-  upload: '持ち込み',
-  external: '外部参照',
-  ai: 'AI生成',
-};
+/*
+ * 版面そのものが持つ文字（第9章 工程00-b）。
+ *
+ * 章本文もキャプションも IR から来るが、出自ラベル・箇条書きの記号・表紙の日付行・
+ * 注意書きの見出しはレンダラ側の文字である。ここが常に和文だと、英語版でも和文
+ * フォントを埋め込まざるを得ない（「／」だけで 2.4MB を運ぶ）。言語で引き分ける。
+ */
+const CHROME = {
+  ja: {
+    origin: { upload: '持ち込み', external: '外部参照', ai: 'AI生成' } as Record<
+      string,
+      string
+    >,
+    noImage: '画像未登録',
+    bullet: '・',
+    caption: (label: string, origin: string) => `${label}（${origin}）`,
+    selfPoint: (label: string) => `${label}（提案位置）`,
+    subtitle: (brand: string, client: string) => `${brand}／${client}`,
+    dateLine: (date: string, revision: string) => `提案日 ${date}／版 ${revision}`,
+    notes: '出力時の注意',
+    checklist: '提出前チェック',
+  },
+  en: {
+    origin: { upload: 'Supplied', external: 'External', ai: 'AI-generated' } as Record<
+      string,
+      string
+    >,
+    noImage: 'No image',
+    bullet: '- ',
+    caption: (label: string, origin: string) => `${label} (${origin})`,
+    selfPoint: (label: string) => `${label} (proposed)`,
+    subtitle: (brand: string, client: string) => `${brand} / ${client}`,
+    dateLine: (date: string, revision: string) => `Proposed ${date} / rev ${revision}`,
+    notes: 'Production notes',
+    checklist: 'Pre-submission checklist',
+  },
+} as const;
+
+type Chrome = (typeof CHROME)['ja'];
+
+/** 版面が持つ文字を、字形の突き合わせに渡せる形で並べる。 */
+function chromeTexts(chrome: Chrome): string[] {
+  return [
+    ...Object.values(chrome.origin),
+    chrome.noImage,
+    chrome.bullet,
+    chrome.caption('a', 'b'),
+    chrome.selfPoint('a'),
+    chrome.subtitle('a', 'b'),
+    chrome.dateLine('a', 'b'),
+    chrome.notes,
+    chrome.checklist,
+  ];
+}
 
 type ImageBlock = Extract<IRBlock, { type: 'image' }>;
 type MapBlock = Extract<IRBlock, { type: 'map' }>;
@@ -136,10 +186,10 @@ function decodeDataUri(dataUri: string): { mime: string; bytes: Uint8Array } | u
 }
 
 /** 本文行の集合。段組みへ流し込むために、章の本文を行単位に均す。 */
-function textLines(section: IRSection): string[] {
+function textLines(section: IRSection, chrome: Chrome): string[] {
   return section.blocks.flatMap((block) => {
     if (block.type === 'paragraph') return [block.text];
-    if (block.type === 'list') return block.items.map((item) => `・${item}`);
+    if (block.type === 'list') return block.items.map((item) => `${chrome.bullet}${item}`);
     return [];
   });
 }
@@ -489,20 +539,41 @@ export async function renderLayoutPdf(
     );
   }
 
+  /*
+   * 字形の過不足を、1ページも描く前に確かめる（第9章 工程00-b）。
+   * 和文フォントは事前に絞ってあるので、実案件の固有名詞に収録外の字が現れうる。
+   * pdf-lib は字形の無い文字を黙って空白にするため、ここで止めないと出力側で
+   * 気づけない。フォントを読み込めないときと同じ扱いにする（第6章 6-6）。
+   */
+  // 版面が持つ文字（出自ラベル・箇条書き記号・日付行）も突き合わせの対象に含める。
+  // IR だけを見ると、レンダラ側の「／」で和文フォントが要ることを見落とす。
+  const chrome = CHROME[ir.lang] ?? CHROME.ja;
+  // 注意書きと提出前チェックの文はレンダラ側で組み立てるので、IR には載っていない。
+  // ここで先に作って突き合わせに含めないと、和文フォントの要否を読み違える。
+  const notes = warningSummary(ir);
+  const checklist = checklistSummary(ir);
+  const texts = [...irTexts(ir), ...chromeTexts(chrome), ...notes, ...checklist];
+  const missing = missingGlyphs(texts, Uint8Array.from(fontBytes));
+  if (missing.length > 0) throw new Error(missingGlyphMessage(missing));
+
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   /*
-   * 和文はサブセット化せずに埋め込む（第8章）。pdf-lib のサブセット書き出しは
+   * 和文は**実行時には**サブセット化しない（第8章）。pdf-lib の実行時サブセット化は
    * 壊れた glyf を吐き、実測で 47 字中 38 字の輪郭が失われた（画面では文字が消える）。
-   * 出力側からは検知できないため、全字形を埋め込む（1本あたり約3MB増）。
-   * 事前サブセット化した軽量フォントの用意は backlog。
+   * 絞り込みはビルド前に一度だけ行い（tools/fonts/subset.py）、ここではそれを
+   * そのまま埋め込む。
+   *
+   * 和文フォントを1文字も使わない面付け（英文だけの提案書）では埋め込まない。
+   * 判定は IR から決まるので、同じ IR からは必ず同じファイルが出る。
    *
    * 欧文（ASCII）は標準フォントで描く。和文フォントに ASCII だけの並びを渡すと
    * テキスト層が壊れるため（textRuns.ts に詳細）。
    */
+  const latin = await doc.embedFont(StandardFonts.Helvetica);
   const fonts: FontPair = {
-    cjk: await doc.embedFont(Uint8Array.from(fontBytes)),
-    latin: await doc.embedFont(StandardFonts.Helvetica),
+    cjk: needsCjkFont(texts) ? await doc.embedFont(Uint8Array.from(fontBytes)) : latin,
+    latin,
   };
   doc.setTitle(ir.project.name);
   doc.setSubject(`${ir.project.brand} / ${ir.project.client}`);
@@ -549,9 +620,9 @@ export async function renderLayoutPdf(
    * 納品物に載る（実測：08-mood-high がそのまま出た）。未設定は提出前チェックで数える。
    */
   const caption = (block: ImageBlock): string => {
-    const origin = block.assetOrigin ? ORIGIN_LABEL[block.assetOrigin] : '画像未登録';
+    const origin = block.assetOrigin ? chrome.origin[block.assetOrigin] : chrome.noImage;
     const label = block.caption.trim();
-    return label === '' ? origin : `${label}（${origin}）`;
+    return label === '' ? origin : chrome.caption(label, origin);
   };
 
   /** 枠に画像かプレースホルダを置き、下にキャプションを添える。 */
@@ -605,13 +676,13 @@ export async function renderLayoutPdf(
     { size: first.fit(ir.project.name, 1 - margin.x * 2, first.size('title')) },
   );
   first.line(
-    `${ir.project.brand}／${ir.project.client}`,
+    chrome.subtitle(ir.project.brand, ir.project.client),
     { x: margin.x, y: 0.86 },
     { size: first.size('heading'), color: palette.accent },
   );
   // 日付は案件データの提案日であって、この PDF を作った日ではない（第8章 8-7）。
   first.line(
-    `提案日 ${ir.project.proposalDate}／版 ${ir.revision}`,
+    chrome.dateLine(ir.project.proposalDate, ir.revision),
     { x: margin.x, y: 0.92 },
     { color: palette.muted },
   );
@@ -718,7 +789,7 @@ export async function renderLayoutPdf(
     if (section.id === 'cover') continue;
 
     const images = imageBlocks(section);
-    const lines = textLines(section);
+    const lines = textLines(section, chrome);
     /*
      * 枠が全て未登録の章は、画像の面として組まない（第8章 8-7）。
      * プレースホルダだけの帯が面の7割を占め、下が白く空く面になる。
@@ -756,8 +827,6 @@ export async function renderLayoutPdf(
   // 出力物にも警告を残す（第6章 6-4、第7章 7-8）。画面で確認しただけでは、
   // 手元に落ちた PDF がどの状態で出たのか後から分からない。
   // warn は「このまま出すと壊れている」、info は提出前に見ておく件数（第8章 8-7）。
-  const notes = warningSummary(ir);
-  const checklist = checklistSummary(ir);
   if (notes.length > 0 || checklist.length > 0) {
     const page = sheet();
     let top = margin.y;
@@ -774,12 +843,15 @@ export async function renderLayoutPdf(
         w: 1 - margin.x * 2,
         h: 1 - top - margin.y,
       };
-      const entries = items.map((item) => ({ text: `・${item}`, color: palette.muted }));
+      const entries = items.map((item) => ({
+        text: `${chrome.bullet}${item}`,
+        color: palette.muted,
+      }));
       page.flow(entries, rect);
       top = rect.y + page.height(entries, rect.w) + 0.03;
     };
-    write('出力時の注意', notes);
-    write('提出前チェック', checklist);
+    write(chrome.notes, notes);
+    write(chrome.checklist, checklist);
   }
 
   /**
@@ -885,7 +957,7 @@ export async function renderLayoutPdf(
       const at = { x: plot.x + point.x * plot.w, y: plot.y + point.y * plot.h };
       page.dot(at, point.self ? 0.006 : 0.004, point.self ? palette.accent : palette.ink);
       page.line(
-        point.self ? `${point.label}（提案位置）` : point.label,
+        point.self ? chrome.selfPoint(point.label) : point.label,
         { x: at.x + 0.01, y: at.y + 0.004 },
         { size: page.size('caption'), color: point.self ? palette.accent : palette.ink },
       );

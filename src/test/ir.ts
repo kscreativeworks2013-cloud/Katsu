@@ -119,11 +119,11 @@ export function buildTestIR({
 
 /**
  * PDF レンダラ用のフォント実体。ブラウザではアセットとして取得するが、
- * テストでは node_modules から直接読む。
+ * テストではリポジトリのファイルを直接読む。
+ * 本番と同じ**絞り込み済み**の実体を読むこと。元の全字形フォントで試すと、
+ * 収録外の字を使っていても気づけない（第9章 工程00-b）。
  */
 export function loadTestFont(): Uint8Array {
   const require = createRequire(import.meta.url);
-  const path =
-    require.resolve('@expo-google-fonts/noto-sans-jp/400Regular/NotoSansJP_400Regular.ttf');
-  return new Uint8Array(readFileSync(path));
+  return new Uint8Array(readFileSync(require.resolve('../assets/fonts/NotoSansJP-jis.ttf')));
 }
