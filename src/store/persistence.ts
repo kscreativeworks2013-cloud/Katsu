@@ -18,7 +18,7 @@ import type {
 const STORAGE_KEY = 'lbvpos.state';
 // v2: StepStatus に review、StepRecord に確認済み、assets を追加。
 // v3: Asset.thumbnail（data URI）を廃し、実体を AssetBinaryStore へ出して variants を持つ。
-const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 3;
 
 export interface PersistedState {
   version: number;

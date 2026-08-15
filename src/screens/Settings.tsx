@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import type { Language, ModelAssignment } from '../data/types';
 import { variantOf } from '../domain/assets';
 import { LANGUAGE_LABEL } from '../data/workflow';
@@ -5,6 +6,114 @@ import { createId } from '../lib/projects';
 import { PERSIST_STATE_LABEL, persistNotice } from '../lib/storagePersistence';
 import { useAppStore } from '../store/context';
 import { Card, Field, PageHeader } from '../ui/primitives';
+
+/**
+ * 状態の書き出しと読み込み（第9章 工程00-a）。
+ *
+ * 案件データは localStorage、画像の実体は IndexedDB にあり、どちらもブラウザの都合で
+ * 消えうる。数時間の手入力を1つの端末の中だけに置かないための出口をここに用意する。
+ */
+function BackupCard() {
+  const { exportBackup, importBackup } = useAppStore();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function runExport(includeBinaries: boolean) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const { fileName, bytes } = await exportBackup(includeBinaries);
+      setNotice({
+        tone: 'ok',
+        text: `${fileName}（${Math.max(1, Math.round(bytes / 1_000_000))}MB）を書き出しました。`,
+      });
+    } catch {
+      setNotice({ tone: 'error', text: '書き出しに失敗しました。' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runImport(file: File) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await importBackup(await file.text());
+      setNotice(
+        result.ok
+          ? { tone: 'ok', text: result.summary }
+          : { tone: 'error', text: result.reason },
+      );
+    } catch {
+      setNotice({ tone: 'error', text: 'ファイルを読み込めませんでした。' });
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  }
+
+  return (
+    <Card
+      title="データの書き出しと読み込み"
+      description="案件・生成物・編集履歴・画像をまとめて1つのファイルにします。ブラウザのデータが消えても、このファイルから戻せます。"
+    >
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+        <button
+          className="btn btn--primary btn--small"
+          type="button"
+          disabled={busy}
+          onClick={() => void runExport(true)}
+        >
+          画像を含めて書き出す
+        </button>
+        <button
+          className="btn btn--ghost btn--small"
+          type="button"
+          disabled={busy}
+          onClick={() => void runExport(false)}
+        >
+          メタデータだけ書き出す
+        </button>
+        <button
+          className="btn btn--ghost btn--small"
+          type="button"
+          disabled={busy}
+          onClick={() => fileInput.current?.click()}
+        >
+          ファイルから読み込む
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          aria-label="書き出しファイル"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void runImport(file);
+          }}
+        />
+      </div>
+
+      <p className="muted" style={{ marginTop: 10 }}>
+        画像を含めると原寸ぶんファイルが大きくなりますが、これ1つで完全に戻ります。
+        メタデータだけの書き出しは小さい代わりに、読み込んだあと原寸を貼り直す必要があります。
+        読み込むと現在の内容は<strong>置き換わります</strong>（併合はしません）。
+      </p>
+
+      {notice && (
+        <p
+          className={notice.tone === 'error' ? 'form-error' : 'muted'}
+          role="status"
+          style={{ marginTop: 10 }}
+        >
+          {notice.text}
+        </p>
+      )}
+    </Card>
+  );
+}
 
 /** 3-13 設定：AIモデル、言語、会社情報、見積もり基準を一元管理する。 */
 export function SettingsScreen() {
@@ -116,6 +225,8 @@ export function SettingsScreen() {
           </table>
         </div>
       </Card>
+
+      <BackupCard />
 
       <Card
         title="画像の保存容量"

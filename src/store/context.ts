@@ -136,6 +136,20 @@ export interface AppStore {
   exportPendingLegacyAssets: () => Promise<void>;
   /** 移送を諦めて先へ進む。残りは破棄され、以降は通常どおり保存される。 */
   discardPendingLegacyAssets: () => void;
+
+  /**
+   * 状態をファイルへ書き出す（第9章 工程00-a）。
+   * `includeBinaries` が true なら画像の実体も同じ JSON に入り、1ファイルで完全に戻る。
+   * false ならメタデータだけになり、復元後は消失扱い（貼り直し導線）に乗る。
+   */
+  exportBackup: (includeBinaries: boolean) => Promise<{ fileName: string; bytes: number }>;
+  /**
+   * 書き出しファイルから復元する。現在の状態は置き換えられる（併合しない）。
+   * 読めない場合は状態に一切触れず、理由を返す。黙って壊さない。
+   */
+  importBackup: (
+    text: string,
+  ) => Promise<{ ok: true; summary: string } | { ok: false; reason: string }>;
   addPortfolioWork: (work: Omit<PortfolioWork, 'id'>) => void;
   updatePortfolioWork: (workId: string, patch: Partial<PortfolioWork>) => void;
   removePortfolioWork: (workId: string) => void;

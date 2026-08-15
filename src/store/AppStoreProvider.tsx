@@ -24,7 +24,19 @@ import type {
 import { assetUsage, detectMissingAssets } from '../domain/assets';
 import { createIndexedDbStore } from '../lib/indexedDbStore';
 import { variantKey, type AssetBinaryStore } from '../domain/assetStore';
-import { dataUriToBlob, makePreview, measureImage } from '../lib/imageProcessing';
+import {
+  blobToDataUri,
+  dataUriToBlob,
+  makePreview,
+  measureImage,
+} from '../lib/imageProcessing';
+import {
+  backupFileName,
+  buildBackup,
+  readBackup,
+  summarizeBackup,
+  type BackupBinary,
+} from '../domain/backup';
 import { requestPersistentStorage, type PersistState } from '../lib/storagePersistence';
 import { createImageCache } from './imageCache';
 import { readField, sameValue, writeField } from '../domain/fields';
@@ -43,7 +55,13 @@ import {
   type NewProjectInput,
   type PendingRun,
 } from './context';
-import { loadState, saveState, writeLegacyRemainder, type SaveOutcome } from './persistence';
+import {
+  loadState,
+  saveState,
+  writeLegacyRemainder,
+  SCHEMA_VERSION,
+  type SaveOutcome,
+} from './persistence';
 
 const EMPTY_CREATIVE: Project['creative'] = {
   worldview: '',
@@ -845,6 +863,97 @@ export function AppStoreProvider({
     }
   }, [pendingLegacy]);
 
+  /**
+   * 状態をファイルへ書き出す（第9章 工程00-a）。
+   *
+   * 画像の実体を含めるかは呼び出し側が決める。含める場合は AssetBinaryStore の
+   * 実体を全件 data URI にして同じ JSON へ入れるので、1ファイルで完全に戻る。
+   * 含めない場合はメタデータだけになり、復元後は消失扱い（貼り直し導線）に乗る。
+   */
+  const exportBackup = useCallback(
+    async (includeBinaries: boolean): Promise<{ fileName: string; bytes: number }> => {
+      const binaries: BackupBinary[] = [];
+      if (includeBinaries) {
+        for (const key of await store.list()) {
+          const blob = await store.get(key);
+          // 取れないキーは消失しているということ。書き出しは中断せず、
+          // 「戻せるものは戻す」を優先する（消失は復元後に既存の導線が拾う）。
+          if (blob) binaries.push({ key, dataUri: await blobToDataUri(blob) });
+        }
+      }
+
+      const exportedAt = new Date().toISOString();
+      const backup = buildBackup(
+        {
+          version: SCHEMA_VERSION,
+          projects,
+          workspaces,
+          provenance,
+          runs,
+          assets,
+          portfolio,
+          settings,
+        },
+        binaries,
+        exportedAt,
+        includeBinaries,
+      );
+      const text = JSON.stringify(backup);
+      const fileName = backupFileName(exportedAt, includeBinaries);
+      downloadFile(fileName, new TextEncoder().encode(text), 'application/json');
+      return { fileName, bytes: text.length };
+    },
+    [assets, portfolio, projects, provenance, runs, settings, store, workspaces],
+  );
+
+  /**
+   * 書き出しファイルから復元する。読めない場合は状態に一切触れずに理由を返す。
+   * 現在の状態は**置き換える**（併合しない）。同じIDの案件がどちらにもあるとき、
+   * どちらを採るかを機械が決めると取り返しがつかないため、判断を利用者に残す。
+   */
+  const importBackup = useCallback(
+    async (
+      text: string,
+    ): Promise<{ ok: true; summary: string } | { ok: false; reason: string }> => {
+      const result = readBackup(text);
+      if (!result.ok) return result;
+
+      const { backup } = result;
+      // 先に実体を入れる。メタデータだけ先に差し替えると、途中で失敗したときに
+      // 「記述子はあるのに実体が無い」状態＝消失として見えてしまう。
+      let restored = 0;
+      for (const binary of backup.binaries) {
+        const blob = dataUriToBlob(binary.dataUri);
+        if (!blob) continue;
+        const put = await store.put(binary.key, blob);
+        if (put.ok) restored += 1;
+      }
+
+      const next = backup.state;
+      setProjects(next.projects);
+      setWorkspaces(next.workspaces ?? {});
+      setProvenance(next.provenance ?? {});
+      setRuns(next.runs ?? []);
+      setAssets(next.assets ?? {});
+      setPortfolio(next.portfolio ?? []);
+      if (next.settings) setSettings(next.settings);
+      setPendingRuns({});
+
+      const keys = await store.list();
+      setMissingAssetIds(detectMissingAssets(next.assets ?? {}, keys));
+      refreshUsage();
+
+      const counts = summarizeBackup(backup);
+      return {
+        ok: true,
+        summary: backup.includesBinaries
+          ? `案件${counts.projects}件・画像${counts.assets}件を復元しました（実体${restored}件）。`
+          : `案件${counts.projects}件・画像${counts.assets}件を復元しました。この書き出しには画像の実体が含まれていないため、原寸は登録元の画面で貼り直してください。`,
+      };
+    },
+    [refreshUsage, store],
+  );
+
   const discardPendingLegacyAssets = useCallback(() => {
     // 原本から残りを落とす。この直後に保存が開き、v3 で上書きされる。
     if (loaded?.legacyPayload) writeLegacyRemainder(loaded.legacyPayload, {});
@@ -913,6 +1022,8 @@ export function AppStoreProvider({
       removeAsset,
       exportPendingLegacyAssets,
       discardPendingLegacyAssets,
+      exportBackup,
+      importBackup,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,
@@ -948,6 +1059,8 @@ export function AppStoreProvider({
       removeAsset,
       exportPendingLegacyAssets,
       discardPendingLegacyAssets,
+      exportBackup,
+      importBackup,
       addPortfolioWork,
       updatePortfolioWork,
       removePortfolioWork,
