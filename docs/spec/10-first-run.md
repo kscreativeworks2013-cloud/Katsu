@@ -612,3 +612,39 @@ e2e は 12 → **14 本**。
 ### 付随して見つかった不具合
 
 `tsc --noEmit` は通るのに `npm run build`（`tsc -b`）が落ちる状態になっていた。工程00-b-2 で入れた `CHROME` を `as const` で定義したため、`ja` の文字列リテラル型が `Chrome` 型になり、`en` が代入できなくなっていた。`interface Chrome` を明示して解消。**型検査は `npm run build` で見ること**（プロジェクト参照の設定が違う）。
+
+---
+
+## 9-19. 工程00-h：型検査の入口を build に統一
+
+### 原因は設定ではなく手順だった
+
+リポジトリのスクリプトは元から正しい。`npm run typecheck` は `tsc -b --noEmit`、CI もこれを回している。落ちていたのは、**検証時に素の `npx tsc --noEmit` を叩いていた**からである。
+
+ルートの `tsconfig.json` は `"files": []` のプロジェクト参照だけを持つ。したがって素の `tsc --noEmit` は**何も検査せずに成功する**。
+
+実測（わざと型エラーのあるファイルを置いて確認）：
+
+| コマンド            | 結果                                                              |
+| ------------------- | ----------------------------------------------------------------- |
+| `npx tsc --noEmit`  | **無言で exit 0**（検査対象ゼロ）                                 |
+| `npm run typecheck` | `error TS2322: Type 'string' is not assignable to type 'number'.` |
+| `npm run build`     | 同上                                                              |
+
+つまり過去の「型検査クリーン」という報告は、**検査していないことをクリーンと読んでいた**。CI は `npm run typecheck` を通しているので、main へ入った状態が壊れていたわけではない。
+
+### 対応
+
+・`CLAUDE.md` を新設し、検証コマンドの表と「`tsc` を直接呼ばない」理由を書いた。素の `tsc --noEmit` が no-op であることを実測つきで残す。
+・CI に `fonts` job を追加した（工程00-b-1 の「CI で任意実行できるジョブ」）。Python と fontTools を入れて `npm run fonts:check` を回す。ビルドの必須条件にはしていない。
+
+### 現時点の確認
+
+```
+npm run typecheck  → 通る
+npm run build      → 通る（built in 1.09s）
+npm run lint       → 通る
+npm test           → 210 passed
+npm run test:e2e   → 14 passed
+npm run fonts:check→ 一致（10,028 符号位置／2,521,504 バイト）
+```

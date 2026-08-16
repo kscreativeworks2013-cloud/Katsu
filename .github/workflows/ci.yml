@@ -24,6 +24,25 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
 
+  # 和文フォントの生成物と subset.py の定義がずれていないか（第9章 工程00-b-1）。
+  # 生成には Python と fontTools が要るので、ビルドの必須条件にはせずここで見る。
+  # 字形集合を編集して再生成を忘れた場合は、この job だけが気づける。
+  fonts:
+    name: Subset font matches its script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: pip install fonttools
+      - run: npm run fonts:check
+
   test:
     name: Unit & component tests
     runs-on: ubuntu-latest
