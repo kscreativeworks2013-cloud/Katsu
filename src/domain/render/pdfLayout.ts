@@ -68,7 +68,19 @@ const TILE_EDGE_PT = 0.6;
  * 注意書きの見出しはレンダラ側の文字である。ここが常に和文だと、英語版でも和文
  * フォントを埋め込まざるを得ない（「／」だけで 2.4MB を運ぶ）。言語で引き分ける。
  */
-const CHROME = {
+interface Chrome {
+  origin: Record<string, string>;
+  noImage: string;
+  bullet: string;
+  caption: (label: string, origin: string) => string;
+  selfPoint: (label: string) => string;
+  subtitle: (brand: string, client: string) => string;
+  dateLine: (date: string, revision: string) => string;
+  notes: string;
+  checklist: string;
+}
+
+const CHROME: Record<'ja' | 'en', Chrome> = {
   ja: {
     origin: { upload: '持ち込み', external: '外部参照', ai: 'AI生成' } as Record<
       string,
@@ -84,10 +96,7 @@ const CHROME = {
     checklist: '提出前チェック',
   },
   en: {
-    origin: { upload: 'Supplied', external: 'External', ai: 'AI-generated' } as Record<
-      string,
-      string
-    >,
+    origin: { upload: 'Supplied', external: 'External', ai: 'AI-generated' },
     noImage: 'No image',
     bullet: '- ',
     caption: (label: string, origin: string) => `${label} (${origin})`,
@@ -97,9 +106,7 @@ const CHROME = {
     notes: 'Production notes',
     checklist: 'Pre-submission checklist',
   },
-} as const;
-
-type Chrome = (typeof CHROME)['ja'];
+};
 
 /** 版面が持つ文字を、字形の突き合わせに渡せる形で並べる。 */
 function chromeTexts(chrome: Chrome): string[] {
