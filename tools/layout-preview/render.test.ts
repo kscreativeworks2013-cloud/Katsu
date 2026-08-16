@@ -194,7 +194,15 @@ const TONES: [number, number, number][][] = [
  * 素材の点数によらず 3+3／3+2 の再配分を確かめるための状態であって、
  * 「登録済みの全素材を出した状態」ではない（点数は実素材と一致しない）。
  */
-function projectWithImages(grid?: { tiles: number; cuts: number }): {
+function projectWithImages(
+  grid?: { tiles: number; cuts: number },
+  /*
+   * 検証専用：表紙のキービジュアルを、全面配置（297mm）で 200ppi を割る素材にする
+   * （第9章 工程00-d）。実案件の素材構成に意図的な低解像度画像を混ぜないための逃がし先。
+   * 寸法を偽らず、実際に小さい画像を作って登録する。
+   */
+  lowRes = false,
+): {
   workspace: Workspace;
   assets: Record<string, Asset>;
   portfolio: PortfolioWork[];
@@ -259,7 +267,17 @@ function projectWithImages(grid?: { tiles: number; cuts: number }): {
 
     const moodboard = pad(forMood, grid?.tiles).map((photo, index) => {
       const id = idOf(photo);
-      register(id, index, photo, photo.dataUri);
+      // 1200px を 297mm に置くと 103ppi。閾値（200）を確実に割る。
+      if (lowRes && index === 0) {
+        register(
+          id,
+          index,
+          { width: 1200, height: 800 },
+          gradientPng(1200, 800, TONES[0][0], TONES[0][1]),
+        );
+      } else {
+        register(id, index, photo, photo.dataUri);
+      }
       const seed = base.moodboard[index];
       return {
         ...(seed ?? base.moodboard[0]),
@@ -381,9 +399,10 @@ async function write(
   name: string,
   grid?: { tiles: number; cuts: number },
   lang: 'ja' | 'en' = 'ja',
+  lowRes = false,
 ): Promise<void> {
   const project = seedProjects[0];
-  const { workspace, assets, portfolio } = projectWithImages(grid);
+  const { workspace, assets, portfolio } = projectWithImages(grid, lowRes);
   const fontBytes = loadTestFont();
 
   const ir = inject(
@@ -428,5 +447,17 @@ describe('版面案の書き出し', () => {
    */
   it('は英語版の PDF を書き出す', async () => {
     await write('adopted-en', undefined, 'en');
+  });
+
+  /*
+   * 低解像度の可視ケース（第9章 工程00-d）。
+   *
+   * 配置幅の修正とキービジュアルの差し替えで、実素材の出力からは 200ppi を割る
+   * 素材が無くなった。検知の経路が生きていることを**出力を見て**確かめる場が
+   * 要るので、専用のフィクスチャに1本だけ残す。実案件の出力に低解像度の行が
+   * 出ないことは正常であって、検知が壊れた証拠ではない。
+   */
+  it('は低解像度の警告が出る PDF を書き出す（検証専用）', async () => {
+    await write('lowres', undefined, 'ja', true);
   });
 });
