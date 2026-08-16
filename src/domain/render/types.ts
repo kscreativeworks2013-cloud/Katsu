@@ -67,6 +67,38 @@ export function warningSummary(ir: ProposalIR): string[] {
   ];
 }
 
+/*
+ * 提出前チェックの文（第9章 工程00-b-2）。
+ *
+ * これはレンダラが組み立てる文で、IR には載っていない。`ir.lang` によらず和文だと、
+ * 英語版が「見出しだけ英語で中身が和文」になり、英語版として評価できない。
+ * 個々の警告文（`warning.message`）は IR 側が和文で持っており、そちらは別問題。
+ */
+const SUMMARY = {
+  ja: {
+    dropped: (title: string, pool: number, shown: number, slot: string) =>
+      `${title}は${pool}件中${shown}件のみ掲載されます（「${slot}」の枠）。`,
+    unnamed: (count: number) =>
+      `説明文が未設定の画像が${count}件あります（枠の下は出自だけになります）。`,
+    missing: (count: number, breakdown: string) =>
+      `画像未登録が${count}件あります（${breakdown}）。登録した分だけ差し替わります。`,
+    breakdown: (title: string, count: number) => `${title}${count}`,
+    join: '、',
+    outsideSection: '章外',
+  },
+  en: {
+    dropped: (title: string, pool: number, shown: number, slot: string) =>
+      `${title}: only ${shown} of ${pool} items are shown (slot "${slot}").`,
+    unnamed: (count: number) =>
+      `${count} image(s) have no caption; only the source label will appear beneath them.`,
+    missing: (count: number, breakdown: string) =>
+      `${count} image slot(s) are empty (${breakdown}). Each will fill in as images are registered.`,
+    breakdown: (title: string, count: number) => `${title} ${count}`,
+    join: ', ',
+    outsideSection: 'unassigned',
+  },
+} as const;
+
 /**
  * 提出前チェック（第6章 6-4、第8章 8-7）。
  *
@@ -75,6 +107,7 @@ export function warningSummary(ir: ProposalIR): string[] {
  * 個票は画面に出ているので、成果物には**件数**を残す（面を注意書きで埋めない）。
  */
 export function checklistSummary(ir: ProposalIR): string[] {
+  const say = SUMMARY[ir.lang] ?? SUMMARY.ja;
   const info = ir.warnings.filter((warning) => warning.severity === 'info');
   const titles = new Map(ir.sections.map((section) => [section.id, section.title]));
 
@@ -85,15 +118,9 @@ export function checklistSummary(ir: ProposalIR): string[] {
    */
   const dropped = ir.slots
     .filter((slot) => slot.exhaustive && slot.pool > slot.shown)
-    .map(
-      (slot) =>
-        `${slot.sectionTitle}は${slot.pool}件中${slot.shown}件のみ掲載されます（「${slot.slotLabel}」の枠）。`,
-    );
+    .map((slot) => say.dropped(slot.sectionTitle, slot.pool, slot.shown, slot.slotLabel));
   const unnamed = ir.slots.reduce((sum, slot) => sum + slot.unnamed, 0);
-  const naming =
-    unnamed > 0
-      ? [`説明文が未設定の画像が${unnamed}件あります（枠の下は出自だけになります）。`]
-      : [];
+  const naming = unnamed > 0 ? [say.unnamed(unnamed)] : [];
 
   const missing = info.filter((warning) => warning.kind === 'missing-image');
   // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
@@ -101,7 +128,10 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const perSection = new Map<string, number>();
   for (const warning of missing) {
     const key =
-      warning.slot ?? titles.get(warning.sectionId ?? '') ?? warning.sectionId ?? '章外';
+      warning.slot ??
+      titles.get(warning.sectionId ?? '') ??
+      warning.sectionId ??
+      say.outsideSection;
     perSection.set(key, (perSection.get(key) ?? 0) + 1);
   }
 
@@ -113,10 +143,7 @@ export function checklistSummary(ir: ProposalIR): string[] {
   if (missing.length === 0) return lines;
 
   const breakdown = [...perSection.entries()]
-    .map(([title, count]) => `${title}${count}`)
-    .join('、');
-  return [
-    `画像未登録が${missing.length}件あります（${breakdown}）。登録した分だけ差し替わります。`,
-    ...lines,
-  ];
+    .map(([title, count]) => say.breakdown(title, count))
+    .join(say.join);
+  return [say.missing(missing.length, breakdown), ...lines];
 }

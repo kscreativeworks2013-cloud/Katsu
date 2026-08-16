@@ -64,3 +64,54 @@ describe('checklistSummary', () => {
     );
   });
 });
+
+/*
+ * 英語版の提出前チェック（第9章 工程00-b-2）。
+ * 「見出しだけ英語で中身が和文」だと、通しで英語版を見ても判断材料にならない。
+ * ここで見るのはレンダラが組む文と枠名まで。個々の警告文は IR 側が和文で持っており、
+ * そちらは別問題として残っている。
+ */
+describe('英語版の提出前チェック', () => {
+  it('は載らなかった件数を英文で出し、枠名も英語にする', () => {
+    const ir = buildTestIR({ lang: 'en' });
+    const trimmed = {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) =>
+        slot.slotId === 'works-grid' ? { ...slot, pool: 6, shown: 3 } : slot,
+      ),
+    };
+    const line = checklistSummary(trimmed).find((item) => item.includes('only 3 of 6'));
+
+    expect(line).toBe('Selected Works: only 3 of 6 items are shown (slot "Selected works").');
+    expect(line).not.toMatch(/[ぁ-んァ-ヶ一-龠]/);
+  });
+
+  it('は説明文の無い画像も英文で数える', () => {
+    const ir = buildTestIR({ lang: 'en' });
+    const unnamed = {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot, index) =>
+        index === 0 ? { ...slot, pool: slot.shown, unnamed: 2 } : { ...slot, pool: slot.shown },
+      ),
+    };
+    const line = checklistSummary(unnamed).find((item) => item.includes('no caption'));
+
+    expect(line).toBe(
+      '2 image(s) have no caption; only the source label will appear beneath them.',
+    );
+  });
+
+  it('は未登録の内訳も英語の枠名でまとめる', () => {
+    const ir = buildTestIR({
+      lang: 'en',
+      assets: { 'ast-1': testAsset('ast-1') },
+      workspace: workspaceWithAsset('ast-1'),
+    });
+    const line = checklistSummary(ir).find((item) => item.includes('image slot(s) are empty'));
+
+    expect(line).toContain('Brand logo 1');
+    expect(line).not.toMatch(/[ぁ-んァ-ヶ一-龠]/);
+  });
+});

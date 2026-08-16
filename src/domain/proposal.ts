@@ -13,6 +13,11 @@ export type SlotSource = 'logo' | 'moodboard' | 'shots' | 'portfolio' | 'competi
 export interface ImageSlot {
   id: string;
   label: string;
+  /**
+   * 英語版の枠名（第9章 工程00-b-2）。提出前チェックの文に枠名が入るため、
+   * ここが和文のままだと英語版の注意書きが日英混在になる。
+   */
+  labelEn: string;
   source: SlotSource;
   /** スロットに入る最大枚数。shots のように可変のものは Infinity。 */
   capacity: number;
@@ -49,12 +54,14 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'cover-logo',
         label: 'ブランドロゴ',
+        labelEn: 'Brand logo',
         source: 'logo',
         capacity: 1,
       },
       {
         id: 'cover-key',
         label: 'キービジュアル',
+        labelEn: 'Key visual',
         source: 'moodboard',
         capacity: 1,
       },
@@ -68,6 +75,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'brand-mood',
         label: 'ブランドイメージ',
+        labelEn: 'Brand imagery',
         source: 'moodboard',
         capacity: 2,
         offset: 1,
@@ -83,6 +91,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'competitor-refs',
         label: '競合のビジュアル',
+        labelEn: 'Competitor visuals',
         source: 'competitors',
         capacity: 3,
         exhaustive: true,
@@ -97,6 +106,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'concept-key',
         label: 'キービジュアル',
+        labelEn: 'Key visual',
         source: 'moodboard',
         capacity: 1,
         offset: 3,
@@ -112,6 +122,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'mood-tiles',
         label: 'タイル',
+        labelEn: 'Tiles',
         source: 'moodboard',
         capacity: 12,
         exhaustive: true,
@@ -126,6 +137,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'shot-frames',
         label: '絵コンテ',
+        labelEn: 'Storyboard',
         source: 'shots',
         capacity: Number.POSITIVE_INFINITY,
       },
@@ -142,7 +154,14 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
      * 「この光をこう作る」を絵で示せる（第8章 8-10）。
      */
     imageSlots: [
-      { id: 'lighting-refs', label: '参考カット', source: 'shots', capacity: 2, offset: 2 },
+      {
+        id: 'lighting-refs',
+        label: '参考カット',
+        labelEn: 'Reference frames',
+        source: 'shots',
+        capacity: 2,
+        offset: 2,
+      },
     ],
   },
   {
@@ -153,6 +172,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       {
         id: 'works-grid',
         label: '選定作品',
+        labelEn: 'Selected works',
         source: 'portfolio',
         capacity: 3,
         exhaustive: true,

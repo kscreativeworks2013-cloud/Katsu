@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "fonts:subset": "python3 tools/fonts/subset.py"
+    "fonts:subset": "python3 tools/fonts/subset.py",
+    "fonts:check": "python3 tools/fonts/subset.py --check"
   },
   "dependencies": {
     "@expo-google-fonts/noto-sans-jp": "^0.4.3",

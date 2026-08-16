@@ -268,13 +268,16 @@ function imageBlocks(
 
   const blocks: IRBlock[] = [];
   for (const slot of section.imageSlots) {
+    // 枠名は提出前チェックの文にそのまま入る。英語版で日英が混ざらないよう引き分ける
+    // （第9章 工程00-b-2）。警告文そのものは和文で組むので slot.label を使う。
+    const slotName = input.lang === 'ja' ? slot.label : slot.labelEn;
     const images = resolveSlot(slot, input.workspace, input.portfolio, input.assets);
     if (images.length === 0) {
       warnings.push({
         kind: 'missing-image',
         severity: 'info',
         sectionId,
-        slot: slot.label,
+        slot: slotName,
         message: `${section.ja}の「${slot.label}」に画像が登録されていません。`,
       });
       continue;
@@ -283,7 +286,7 @@ function imageBlocks(
     // 供給元の件数と、実際に載った件数を残す。差分の言い方は出力側が決める。
     usage.push({
       slotId: slot.id,
-      slotLabel: slot.label,
+      slotLabel: slotName,
       sectionId,
       sectionTitle: input.lang === 'ja' ? section.ja : section.en,
       pool: slotPoolSize(slot, input.workspace, input.portfolio),
@@ -308,7 +311,7 @@ function imageBlocks(
           kind: 'missing-image',
           severity: 'info',
           sectionId,
-          slot: slot.label,
+          slot: slotName,
           message: `${section.ja}の「${image.caption}」に画像が登録されていません。`,
         });
       }
@@ -319,7 +322,7 @@ function imageBlocks(
           kind: 'external-image',
           severity: 'info',
           sectionId,
-          slot: slot.label,
+          slot: slotName,
           message: `${image.caption} は取り込めていないため、PDF・PowerPoint には含まれません。`,
         });
       }
@@ -330,7 +333,7 @@ function imageBlocks(
           kind: 'preview-only',
           severity: 'warn',
           sectionId,
-          slot: slot.label,
+          slot: slotName,
           message: `${image.caption} は表示用の縮小版しかないため、出力では画像が欠けます。原寸を登録し直してください。`,
         });
       }
@@ -347,7 +350,7 @@ function imageBlocks(
           kind: 'low-resolution',
           severity: 'warn',
           sectionId,
-          slot: slot.label,
+          slot: slotName,
           message: `${image.caption}（${section.ja}）は印刷解像度が不足しています：${effectivePpi(original.width, printWidthMm)}ppi（配置幅${printWidthMm}mm には ${needed}px 必要、実際は ${original.width}px）。`,
         });
       }
@@ -356,7 +359,7 @@ function imageBlocks(
         type: 'image',
         caption: image.caption,
         slotId: slot.id,
-        slotLabel: slot.label,
+        slotLabel: slotName,
         printWidthMm,
         assetId: asset?.id,
         assetOrigin: asset?.origin,

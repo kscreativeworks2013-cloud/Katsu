@@ -23,15 +23,21 @@ JIS X 0213（第3・第4水準）まで広げる案は実測で退けた：
 集合を変えたら `npm run fonts:subset` を実行し、生成物ごとコミットする。
 """
 
+import hashlib
+import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(
     ROOT, 'node_modules/@expo-google-fonts/noto-sans-jp/400Regular/NotoSansJP_400Regular.ttf'
 )
 OUT = os.path.join(ROOT, 'src/assets/fonts/NotoSansJP-jis.ttf')
+# 生成の素性。コミットされた実体が本当にこのスクリプトの出力かを、あとから照合する。
+MANIFEST = os.path.join(ROOT, 'src/assets/fonts/NotoSansJP-jis.json')
 
 # 欧文・記号。ブランド名の欧文（Ō Œ Š）、英文の約物（– — ‚ „ • ‹ ›）、
 # 通貨・単位・丸数字・チェック記号まで含める。
@@ -79,37 +85,121 @@ def code_points() -> set:
     return points
 
 
+def sha256_of(path: str) -> str:
+    with open(path, 'rb') as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def points_digest(points: set) -> str:
+    """符号位置の集合そのものの指紋。集合を触ったかどうかがこれで分かる。"""
+    listing = ','.join(f'U+{code:04X}' for code in sorted(points))
+    return hashlib.sha256(listing.encode('utf-8')).hexdigest()
+
+
+def generate(points: set, out_path: str) -> None:
+    listing = out_path + '.unicodes.txt'
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(listing, 'w', encoding='utf-8') as handle:
+        handle.write(','.join(f'U+{code:04X}' for code in sorted(points)))
+
+    try:
+        subprocess.run(
+            [
+                'pyftsubset',
+                SRC,
+                f'--unicodes-file={listing}',
+                f'--output-file={out_path}',
+                # 縦組みも合字も使っていない。OpenType 機能は落として字形だけ残す。
+                '--layout-features=',
+                '--no-hinting',
+                '--desubroutinize',
+                '--drop-tables+=DSIG',
+            ],
+            check=True,
+        )
+    finally:
+        os.remove(listing)
+
+
+def write_manifest(points: set) -> dict:
+    """
+    生成の素性を書き残す（第9章 工程00-b-1）。
+
+    ・`output` はコミット済みの実体と突き合わせる。手で置き換わった／壊れた／
+      部分的にコミットされた、を **Python 無しのテスト**で捕まえられる。
+    ・`codePoints` は集合そのものの指紋。集合を編集して再生成を忘れた経路は、
+      これを再計算しないと分からない（`--check` が担当する）。
+    """
+    manifest = {
+        'source': os.path.relpath(SRC, ROOT),
+        'sourceSha256': sha256_of(SRC),
+        'codePointCount': len(points),
+        'codePointsSha256': points_digest(points),
+        'outputBytes': os.path.getsize(OUT),
+        'outputSha256': sha256_of(OUT),
+        'extraChars': EXTRA_CHARS,
+    }
+    with open(MANIFEST, 'w', encoding='utf-8') as handle:
+        json.dump(manifest, handle, ensure_ascii=False, indent=2)
+        handle.write('\n')
+    return manifest
+
+
+def check(points: set) -> int:
+    """再生成して、コミット済みの実体と一致するかを見る。ビルドの必須条件にはしない。"""
+    if not os.path.exists(OUT) or not os.path.exists(MANIFEST):
+        print('生成物かマニフェストがありません。`npm run fonts:subset` を実行してください。', file=sys.stderr)
+        return 1
+
+    with open(MANIFEST, encoding='utf-8') as handle:
+        recorded = json.load(handle)
+
+    problems = []
+    if recorded.get('codePointsSha256') != points_digest(points):
+        problems.append(
+            '字形集合が subset.py の現在の定義と一致しません'
+            f'（記録 {recorded.get("codePointCount")} 符号位置／現在 {len(points)}）。'
+        )
+    if recorded.get('sourceSha256') != sha256_of(SRC):
+        problems.append('元のフォントが記録時と異なります（npm の版が上がった可能性）。')
+    if recorded.get('outputSha256') != sha256_of(OUT):
+        problems.append('コミットされた実体がマニフェストの記録と一致しません。')
+
+    with tempfile.TemporaryDirectory() as work:
+        fresh = os.path.join(work, 'fresh.ttf')
+        generate(points, fresh)
+        if sha256_of(fresh) != sha256_of(OUT):
+            problems.append('再生成した実体がコミット済みのものと一致しません。')
+
+    if problems:
+        for problem in problems:
+            print(f'× {problem}', file=sys.stderr)
+        print('`npm run fonts:subset` で作り直し、生成物ごとコミットしてください。', file=sys.stderr)
+        return 1
+
+    print(f'一致（{recorded["codePointCount"]:,} 符号位置／{recorded["outputBytes"]:,} バイト）')
+    return 0
+
+
 def main() -> int:
     if not os.path.exists(SRC):
         print(f'元のフォントが見つかりません: {SRC}', file=sys.stderr)
         return 1
+    if shutil.which('pyftsubset') is None:
+        print('pyftsubset がありません（pip install fonttools）。', file=sys.stderr)
+        return 1
 
     points = code_points()
-    listing = os.path.join(os.path.dirname(OUT), '.subset-unicodes.txt')
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(listing, 'w', encoding='utf-8') as handle:
-        handle.write(','.join(f'U+{code:04X}' for code in sorted(points)))
+    if '--check' in sys.argv:
+        return check(points)
 
-    subprocess.run(
-        [
-            'pyftsubset',
-            SRC,
-            f'--unicodes-file={listing}',
-            f'--output-file={OUT}',
-            # 縦組みも合字も使っていない。OpenType 機能は落として字形だけ残す。
-            '--layout-features=',
-            '--no-hinting',
-            '--desubroutinize',
-            '--drop-tables+=DSIG',
-        ],
-        check=True,
-    )
-    os.remove(listing)
+    generate(points, OUT)
+    manifest = write_manifest(points)
 
     before = os.path.getsize(SRC)
-    after = os.path.getsize(OUT)
     print(f'指定 {len(points):,} 符号位置')
-    print(f'{before:,} バイト → {after:,} バイト（{after / before:.0%}）')
+    print(f'{before:,} バイト → {manifest["outputBytes"]:,} バイト（{manifest["outputBytes"] / before:.0%}）')
+    print(f'SHA-256 {manifest["outputSha256"]}')
     return 0
 
 
