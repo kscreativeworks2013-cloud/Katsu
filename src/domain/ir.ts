@@ -32,6 +32,12 @@ export interface IRImageVariant {
   key: string;
   width: number;
   height: number;
+  /**
+   * 実体のバイト数。重複検知の指紋に使う（第9章 工程00-c）。
+   * 同じ写真をムードボードと実績に別々に登録すると**別のアセットID**になるため、
+   * ID の一致では気づけない。寸法とバイト数が完全に一致する2枚は同じ画像と見なす。
+   */
+  bytes: number;
 }
 
 export type IRBlock =
@@ -368,6 +374,7 @@ function imageBlocks(
           key: original.key,
           width: original.width,
           height: original.height,
+          bytes: original.bytes,
         },
         href: isExternal ? asset?.source : undefined,
         fallback: image.fallback,
@@ -389,28 +396,125 @@ function imageBlocks(
  * 使った1枚がそこにも出るのは重複ではなく参照元の提示である。これを数えると
  * 正常な構成で常時警告が出て、本当の重複が埋もれる。
  */
-const PROMINENT_SLOTS = ['cover-key', 'brand-mood', 'concept-key', 'shot-frames'];
+/*
+ * 重複検知の対象（第8章 8-7、第9章 工程00-c）。
+ *
+ * 同じ素材が並ぶと目につく枠。ここに2度出たら知らせる。
+ * ムードボードは**素材の一覧そのもの**なので対象に入れない——表紙やコンセプトに
+ * 選んだ1枚がムードボードにも並ぶのは、参照元を示しているだけで重複ではない。
+ */
+const PROMINENT_SLOTS = [
+  'cover-key',
+  'brand-mood',
+  'concept-key',
+  'shot-frames',
+  // 実績を含める（第9章 工程00-c）。実績は「自分の仕事」であって参照元ではないので、
+  // ムードボードと同じ写真が出るなら、参考画像を自作として見せていることになる。
+  'works-grid',
+];
 
-function duplicateWarnings(sections: IRSection[]): IRWarning[] {
-  const places = new Map<string, string[]>();
+/*
+ * ムードボードの枠（第9章 工程00-c）。
+ *
+ * 対象に入れないのは「素材の一覧そのものであり、選んだ1枚がそこにも並ぶのは
+ * 参照元の提示だから」である。この理屈が成り立つのは**ムードボードから引いている枠**
+ * （表紙・ブランド分析・撮影コンセプト）に対してだけで、実績（供給元はポートフォリオ）や
+ * ショットリスト（供給元は絵コンテ）には成り立たない。
+ *
+ * その線引きは枠ごとの列挙ではなく**供給元の比較**で行う（下の2つ目の見方）。
+ * 列挙で持つと、枠が増えたときに片方だけ更新される。
+ */
+const MOODBOARD_SLOT = 'mood-tiles';
 
+/** 枠の供給元。重複が「参照元の提示」で説明できるかの判定に使う。 */
+const SLOT_SOURCE = new Map(
+  PROPOSAL_TEMPLATE.flatMap((section) =>
+    section.imageSlots.map((slot) => [slot.id, slot.source] as const),
+  ),
+);
+
+interface Place {
+  where: string;
+  slotId: string;
+  assetId: string;
+  /** 実体の指紋（寸法とバイト数）。未解決なら undefined。 */
+  print?: string;
+}
+
+/** 画像が出た場所を集める。ムードボードも含めて集め、数えるかどうかは後で決める。 */
+function imagePlaces(sections: IRSection[]): Place[] {
+  const places: Place[] = [];
   for (const section of sections) {
     for (const block of section.blocks) {
       if (block.type !== 'image' || !block.assetId) continue;
-      if (!PROMINENT_SLOTS.includes(block.slotId)) continue;
-      // 「どこに出たか」は章名とキャプションで言う（スロットIDは読み手の語彙ではない）。
-      const where = `${section.title}${block.caption ? `／${block.caption}` : ''}`;
-      places.set(block.assetId, [...(places.get(block.assetId) ?? []), where]);
+      if (!PROMINENT_SLOTS.includes(block.slotId) && block.slotId !== MOODBOARD_SLOT) continue;
+      places.push({
+        // 「どこに出たか」は章名とキャプションで言う（スロットIDは読み手の語彙ではない）。
+        where: `${section.title}${block.caption ? `／${block.caption}` : ''}`,
+        slotId: block.slotId,
+        assetId: block.assetId,
+        print: block.variant
+          ? `${block.variant.width}x${block.variant.height}:${block.variant.bytes}`
+          : undefined,
+      });
     }
   }
+  return places;
+}
 
-  return [...places.values()]
-    .filter((where) => where.length > 1)
-    .map((where) => ({
-      kind: 'duplicate-image' as const,
-      severity: 'info' as const,
-      message: `同じ画像が${where.length}か所に使われています：${where.join('、')}。`,
-    }));
+function groupBy<T>(items: T[], key: (item: T) => string | undefined): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const id = key(item);
+    if (id === undefined) continue;
+    groups.set(id, [...(groups.get(id) ?? []), item]);
+  }
+  return groups;
+}
+
+function duplicateMessage(places: Place[]): IRWarning {
+  const where = places.map((place) => place.where);
+  return {
+    kind: 'duplicate-image',
+    severity: 'info',
+    message: `同じ画像が${where.length}か所に使われています：${where.join('、')}。`,
+  };
+}
+
+/*
+ * 同じ画像が目立つ枠に並んでいないか（第8章 8-7、第9章 工程00-c）。
+ *
+ * 2つの見方で拾う。
+ *
+ * 1. **同じアセット**が複数の枠に出ている。ムードボードは数えない（参照元の提示）。
+ * 2. **別のアセットだが中身が同じ**ものが、供給元の違う枠に出ている。同じ写真を
+ *    ムードボードと実績に別々に登録するとアセットIDは別になるので、1では気づけない
+ *    （実測：`06-mood-ring.jpg` と `12-work-ring.jpg` は SHA-256 が一致するが別ID）。
+ *    供給元が同じなら中身の一致は 1 が拾うので、ここは供給元をまたぐ場合に限る。
+ *    そうしないと、寸法とバイト数がたまたま揃った別々の写真で誤検知する。
+ */
+function duplicateWarnings(sections: IRSection[]): IRWarning[] {
+  const places = imagePlaces(sections);
+  const warnings: IRWarning[] = [];
+  const reported = new Set<string>();
+
+  for (const [assetId, found] of groupBy(places, (place) => place.assetId)) {
+    const counted = found.filter((place) => PROMINENT_SLOTS.includes(place.slotId));
+    if (counted.length < 2) continue;
+    warnings.push(duplicateMessage(counted));
+    reported.add(assetId);
+  }
+
+  for (const found of groupBy(places, (place) => place.print).values()) {
+    const sources = new Set(found.map((place) => SLOT_SOURCE.get(place.slotId)));
+    const assetIds = new Set(found.map((place) => place.assetId));
+    // 供給元をまたぎ、かつ別々のアセットとして登録されているものだけ。
+    if (sources.size < 2 || assetIds.size < 2) continue;
+    if ([...assetIds].some((id) => reported.has(id))) continue;
+    warnings.push(duplicateMessage(found));
+  }
+
+  return warnings;
 }
 
 function sourceFor(sectionId: string, input: BuildIRInput): IRSectionSource {

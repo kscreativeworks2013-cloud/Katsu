@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Provenance } from '../data/types';
+import type { Asset, Provenance } from '../data/types';
+import { seedPortfolio } from '../data/fixtures';
 import {
   buildTestIR,
   testAsset,
@@ -344,5 +345,70 @@ describe('画像の解像度と実体（第7章 7-2／7-6）', () => {
 
     expect(ir.warnings.some((item) => item.kind === 'low-resolution')).toBe(false);
     expect(ir.warnings.some((item) => item.kind === 'preview-only')).toBe(false);
+  });
+});
+
+/*
+ * 重複検知に実績を含める（第9章 工程00-c）。
+ * ムードボードを除外する理屈は「参照元の提示だから」で、これが成り立つのは
+ * ムードボードから引く枠に対してだけ。実績は供給元が別なので成り立たない。
+ */
+describe('重複検知と実績', () => {
+  /** 中身が同じで ID が別のアセットを2つ作る。実運用では同じ写真を2箇所に登録した状態。 */
+  function twinAssets(): Record<string, Asset> {
+    const shape = { width: 2600, height: 1734, bytes: 380_564 };
+    return {
+      'ast-mood-ring': testAsset('ast-mood-ring', shape),
+      'ast-work-ring': testAsset('ast-work-ring', shape),
+    };
+  }
+
+  it('は同じ写真がムードボードと実績に別々に登録されていても拾う', () => {
+    const base = workspaceWithBody();
+    const ir = buildTestIR({
+      assets: twinAssets(),
+      workspace: {
+        ...base,
+        moodboard: base.moodboard.map((tile, index) => ({
+          ...tile,
+          assetId: index === 0 ? 'ast-mood-ring' : undefined,
+        })),
+      },
+      portfolio: seedPortfolio.map((work, index) => ({
+        ...work,
+        assetId: index === 0 ? 'ast-work-ring' : undefined,
+      })),
+    });
+
+    const duplicate = ir.warnings.find((warning) => warning.kind === 'duplicate-image');
+    expect(duplicate?.message).toContain('実績');
+    expect(duplicate?.severity).toBe('info');
+  });
+
+  it('は供給元が同じなら、寸法とバイト数の一致だけでは発火しない', () => {
+    // 同じ寸法・同じバイト数の別々の写真をムードボードに並べただけ。
+    // ここで発火させると、生成画像のように寸法の揃う素材で常時警告になる。
+    const base = workspaceWithBody();
+    const shape = { width: 2600, height: 1734, bytes: 380_564 };
+    const assets = Object.fromEntries(
+      [0, 1, 2, 3].map((index) => [`ast-${index}`, testAsset(`ast-${index}`, shape)]),
+    );
+    const ir = buildTestIR({
+      assets,
+      workspace: {
+        ...base,
+        moodboard: base.moodboard.map((tile, index) => ({
+          ...tile,
+          assetId: `ast-${index % 4}`,
+        })),
+      },
+    });
+
+    const messages = ir.warnings
+      .filter((warning) => warning.kind === 'duplicate-image')
+      .map((warning) => warning.message);
+    // 同じアセットIDの再掲（表紙とコンセプトが同じ1枚）は従来どおり拾う。
+    // 別IDで中身だけ同じものを、供給元が同じまま拾うことはしない。
+    expect(messages.every((message) => !message.includes('実績'))).toBe(true);
   });
 });
