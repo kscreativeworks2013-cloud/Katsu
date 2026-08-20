@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Language, ModelAssignment } from '../data/types';
-import { variantOf } from '../domain/assets';
+import { storageIsTight, storagePressure, variantOf } from '../domain/assets';
 import { LANGUAGE_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
 import { PERSIST_STATE_LABEL, persistNotice } from '../lib/storagePersistence';
@@ -236,8 +236,22 @@ export function SettingsScreen() {
           {Math.round(usage.bytes / 1_000_000).toLocaleString()}MB 使用
           {usage.quotaBytes
             ? `（この端末の利用可能量の目安 ${Math.round(usage.quotaBytes / 1_000_000).toLocaleString()}MB）`
-            : '（利用可能量はこの環境では取得できません）'}
+            : assetStorage.quotaChecked
+              ? '（利用可能量はこの環境では取得できません）'
+              : '（利用可能量を確認しています…）'}
         </p>
+
+        {/*
+          逼迫の判定は「アプリが数えた実体の合計 ÷ ブラウザの見積もる quota」で行う
+          （第9章 工程R-4）。estimate() の usage は実測で桁が合わなかったので使わない。
+        */}
+        {storageIsTight(usage) && (
+          <p className="form-error" role="status" style={{ marginTop: 8 }}>
+            保存領域の
+            {Math.round((storagePressure(usage) ?? 0) * 100)}
+            %を使っています。これ以上の登録は失敗することがあります。不要な画像を解除するか、書き出してから整理してください。
+          </p>
+        )}
         <p className="muted" style={{ marginTop: 10 }}>
           原寸あり {usage.originalCount}件／表示用のみ {usage.previewOnlyCount}件／参照のみ{' '}
           {usage.referenceOnlyCount}件／失われた画像 {usage.missingCount}件

@@ -28,6 +28,16 @@ export interface ImageSlot {
    */
   offset?: number;
   /**
+   * 面を支配する枠か（第9章 工程R-1）。
+   *
+   * 表紙・ブランド分析・撮影コンセプトのキービジュアルと、絵コンテ・参考カット。
+   * ここに何が入るかで提案書の印象が決まるのに、既定では供給元から offset で
+   * 機械的に取っている。実測：本文が「暗部を残す・半逆光・無彩色」と述べている案件で、
+   * 表紙にハイキーの着物、コンセプトに黄色いサングラスの人物が入った。
+   * 黙って先頭から取ったままにせず、選ばれていないことを提出前チェックに出す。
+   */
+  principal?: boolean;
+  /**
    * 供給元を全点見せる枠か（ムードボード・競合・実績）。
    * true の枠で枠数を超えた素材は「登録したのに出ない」ことになるので知らせる。
    * 表紙のように供給元から1点を選ぶだけの枠は、超過が正常なので対象にしない。
@@ -60,6 +70,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       },
       {
         id: 'cover-key',
+        principal: true,
         label: 'キービジュアル',
         labelEn: 'Key visual',
         source: 'moodboard',
@@ -74,6 +85,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'brand-mood',
+        principal: true,
         label: 'ブランドイメージ',
         labelEn: 'Brand imagery',
         source: 'moodboard',
@@ -105,6 +117,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'concept-key',
+        principal: true,
         label: 'キービジュアル',
         labelEn: 'Key visual',
         source: 'moodboard',
@@ -136,6 +149,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'shot-frames',
+        principal: true,
         label: '絵コンテ',
         labelEn: 'Storyboard',
         source: 'shots',
@@ -156,6 +170,7 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'lighting-refs',
+        principal: true,
         label: '参考カット',
         labelEn: 'Reference frames',
         source: 'shots',

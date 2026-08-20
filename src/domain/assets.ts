@@ -90,6 +90,28 @@ export interface AssetUsage {
  * 保存状況の集計（第7章 7-10）。
  * IndexedDB の上限はブラウザが動的に決めるため、固定の上限値は持たない。
  */
+/**
+ * 保存領域が逼迫していると見なす割合（第9章 工程R-4）。
+ *
+ * 分子はアプリが数えた variant のバイト数、分母はブラウザの見積もる quota。
+ * `navigator.storage.estimate()` の usage は使わない——実測で桁が合わなかった
+ * （アプリの合計 5,670,182 に対し estimate は 597,210。書き出したファイルの大きさ
+ * 7,614,731 ＝ 合計 × 4/3 ＋ JSON 分 と整合するのはアプリ側の数字のほう）。
+ */
+export const STORAGE_WARN_RATIO = 0.8;
+
+/** 保存領域の逼迫度。quota が取れない環境では判定しない（undefined）。 */
+export function storagePressure(usage: AssetUsage): number | undefined {
+  if (!usage.quotaBytes || usage.quotaBytes <= 0) return undefined;
+  return usage.bytes / usage.quotaBytes;
+}
+
+/** 逼迫していて、これ以上の登録が失敗しうる状態か。 */
+export function storageIsTight(usage: AssetUsage): boolean {
+  const ratio = storagePressure(usage);
+  return ratio !== undefined && ratio >= STORAGE_WARN_RATIO;
+}
+
 export function assetUsage(
   assets: Record<string, Asset>,
   missingIds: readonly string[] = [],

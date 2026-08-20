@@ -28,7 +28,13 @@ describe('checklistSummary', () => {
     const empty = {
       ...ir,
       warnings: [],
-      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0 })),
+      // 主要枠を選び終えた状態。選んでいなければ、それ自体が指摘になる（工程R-1）。
+      slots: ir.slots.map((slot) => ({
+        ...slot,
+        pool: slot.shown,
+        unnamed: 0,
+        chosen: true,
+      })),
     };
 
     expect(checklistSummary(empty)).toEqual([]);
@@ -113,5 +119,114 @@ describe('英語版の提出前チェック', () => {
 
     expect(line).toContain('Brand logo 1');
     expect(line).not.toMatch(/[ぁ-んァ-ヶ一-龠]/);
+  });
+});
+
+/*
+ * 面を左右する枠の未選択（第9章 工程R-1）。
+ * 既定は供給元の並び順なので、放っておくと「たまたま先頭にあった写真」が表紙になる。
+ * 実測：本文が暗部と半逆光を述べている案件で、表紙にハイキーの着物が入った。
+ */
+describe('主要枠の未選択', () => {
+  it('は件数と枠名を出す', () => {
+    const ir = buildTestIR();
+    const line = checklistSummary({
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0 })),
+    }).find((item) => item.includes('未選択'));
+
+    expect(line).toContain('表紙／キービジュアル');
+    expect(line).toContain('撮影コンセプト／キービジュアル');
+  });
+
+  it('は選んだ枠を数えない', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary({
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({
+        ...slot,
+        pool: slot.shown,
+        unnamed: 0,
+        chosen: true,
+      })),
+    });
+
+    expect(lines.some((line) => line.includes('未選択'))).toBe(false);
+  });
+
+  it('は画像が1枚も入っていない枠を数えない（未登録として別に出る）', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary({
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: 0, shown: 0, unnamed: 0 })),
+    });
+
+    expect(lines.some((line) => line.includes('未選択'))).toBe(false);
+  });
+});
+
+/*
+ * 書いたのに版面に載らない本文（第9章 工程R-3）。
+ * 実測：表紙に65字、ムードボードに134字を書いて PDF に1文字も出なかった。
+ * 気づけないまま残さないよう、件数を提出前チェックに出す。
+ */
+describe('版面に載らない本文', () => {
+  /** 段落 n 本と画像1点を持つ章に差し替える。 */
+  function withBody(ir: ReturnType<typeof buildTestIR>, sectionId: string, paragraphs: number) {
+    return {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0, chosen: true })),
+      sections: ir.sections.map((section) =>
+        section.id === sectionId
+          ? {
+              ...section,
+              blocks: [
+                ...Array.from({ length: paragraphs }, (_, index) => ({
+                  type: 'paragraph' as const,
+                  text: `段落${index + 1}`,
+                })),
+                // 画像が入っている面であることが条件。1枚も無い章はテキスト面へ落ち、
+                // 本文は全量が載る（bodyCapacity がそう定義している）。
+                {
+                  type: 'image' as const,
+                  caption: '',
+                  slotId: `${sectionId}-key`,
+                  slotLabel: '枠',
+                  printWidthMm: 297,
+                  assetId: 'ast-1',
+                },
+              ],
+            }
+          : section,
+      ),
+    };
+  }
+
+  it('は表紙のリードを超えた行数を件数で出す', () => {
+    const ir = buildTestIR();
+    const line = checklistSummary(withBody(ir, 'cover', 5)).find((item) =>
+      item.includes('版面に載りません'),
+    );
+
+    expect(line).toContain('表紙');
+    expect(line).toContain('3行');
+  });
+
+  it('はリードに収まる行数では出さない', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary(withBody(ir, 'cover', 2));
+
+    expect(lines.some((line) => line.includes('版面に載りません'))).toBe(false);
+  });
+
+  it('は本文が主役の章では出さない（全量が段組みへ流れる）', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary(withBody(ir, 'brand', 12));
+
+    expect(lines.some((line) => line.includes('版面に載りません'))).toBe(false);
   });
 });

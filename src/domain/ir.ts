@@ -148,6 +148,16 @@ export interface IRSlotUsage {
   exhaustive: boolean;
   /** 説明文が付いていない枠の数（キャプション未設定）。 */
   unnamed: number;
+  /**
+   * 面を支配する枠か（第9章 工程R-1）。表紙・ブランド分析・撮影コンセプトの
+   * キービジュアルと、絵コンテ・参考カット。
+   */
+  principal: boolean;
+  /**
+   * 利用者が中身を選んだか。false なら供給元から機械的に取った既定のまま。
+   * 主要枠でこれが false のときは、提出前チェックに件数を出す。
+   */
+  chosen: boolean;
 }
 
 export interface ProposalIR {
@@ -298,6 +308,9 @@ function imageBlocks(
       pool: slotPoolSize(slot, input.workspace, input.portfolio),
       shown: images.length,
       exhaustive: slot.exhaustive === true,
+      principal: slot.principal === true,
+      // 選択があるかどうかだけを見る。中身の妥当性は利用者にしか判断できない。
+      chosen: (input.workspace.picks?.[slot.id]?.length ?? 0) > 0,
       // ロゴはキャプションを描かない枠なので、説明文の有無を数えない。
       unnamed:
         slot.source === 'logo'

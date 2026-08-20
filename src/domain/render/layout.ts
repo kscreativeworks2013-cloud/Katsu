@@ -124,6 +124,30 @@ export function sectionMode(sectionId: string): SectionMode {
   return SECTION_MODE[sectionId] ?? 'dense';
 }
 
+/**
+ * リード文として置ける行数（第9章 工程R-3）。
+ *
+ * 表紙とムードボードは画像が面を支配するので、本文をそのまま流す場所がない。
+ * それでも**何も置けない**わけではなく、表紙は題字の下、ムードボードは台紙の上に
+ * リードを2行まで置ける。ここを超えた行は版面に載らない。
+ *
+ * この数はレンダラと提出前チェックの両方が参照する。片方だけが知っていると、
+ * 「載らなかったのに知らせない」（実測：199字が黙って消えた）か、
+ * 「知らせたのに実は載っていた」のどちらかが起きる。
+ */
+export const LEAD_LINES = 2;
+
+/**
+ * 章の本文を何行まで版面が受け取るか。
+ * `Infinity` は段組みへ全量流し込む面（本文が主役の面）。
+ */
+export function bodyCapacity(sectionId: string, hasImages: boolean): number {
+  // 画像が1枚も無い章はテキスト面へ落ちるので、全量が載る。
+  if (!hasImages) return Number.POSITIVE_INFINITY;
+  if (sectionId === 'cover' || sectionId === 'moodboard') return LEAD_LINES;
+  return Number.POSITIVE_INFINITY;
+}
+
 export interface LayoutSpec {
   id: string;
   label: string;

@@ -5,6 +5,7 @@
 
 import type { ExportFormat } from '../../data/types';
 import type { ProposalIR } from '../ir';
+import { bodyCapacity } from './layout';
 
 export interface RenderedFile {
   fileName: string;
@@ -82,6 +83,10 @@ const SUMMARY = {
       `説明文が未設定の画像が${count}件あります（枠の下は出自だけになります）。`,
     missing: (count: number, breakdown: string) =>
       `画像未登録が${count}件あります（${breakdown}）。登録した分だけ差し替わります。`,
+    unchosen: (count: number, breakdown: string) =>
+      `面を左右する枠が未選択のままです：${count}件（${breakdown}）。供給元の並び順で機械的に入っているので、提出前に選び直してください。`,
+    dropped_body: (title: string, count: number) =>
+      `${title}に書いた本文${count}行は、この面の版面に載りません。`,
     breakdown: (title: string, count: number) => `${title}${count}`,
     join: '、',
     outsideSection: '章外',
@@ -93,6 +98,10 @@ const SUMMARY = {
       `${count} image(s) have no caption; only the source label will appear beneath them.`,
     missing: (count: number, breakdown: string) =>
       `${count} image slot(s) are empty (${breakdown}). Each will fill in as images are registered.`,
+    unchosen: (count: number, breakdown: string) =>
+      `${count} slot(s) that carry a page have not been chosen (${breakdown}). They are filled in source order — pick them before you send this out.`,
+    dropped_body: (title: string, count: number) =>
+      `${count} line(s) of body text written for ${title} do not fit this page's layout.`,
     breakdown: (title: string, count: number) => `${title} ${count}`,
     join: ', ',
     outsideSection: 'unassigned',
@@ -122,6 +131,40 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const unnamed = ir.slots.reduce((sum, slot) => sum + slot.unnamed, 0);
   const naming = unnamed > 0 ? [say.unnamed(unnamed)] : [];
 
+  /*
+   * 面を左右する枠が選ばれないまま出ていないか（第9章 工程R-1）。
+   * 既定は供給元の並び順なので、放っておくと「たまたま先頭にあった写真」が表紙になる。
+   * 実測：本文が暗部と半逆光を述べている案件で、表紙にハイキーの着物が入った。
+   */
+  const unchosen = ir.slots.filter((slot) => slot.principal && !slot.chosen && slot.shown > 0);
+  const choosing =
+    unchosen.length > 0
+      ? [
+          say.unchosen(
+            unchosen.length,
+            unchosen.map((slot) => `${slot.sectionTitle}／${slot.slotLabel}`).join(say.join),
+          ),
+        ]
+      : [];
+
+  /*
+   * 書いたのに載らない本文（第9章 工程R-3）。
+   * 版面が受け取る行数は `bodyCapacity` が持ち、レンダラもこれを見て切る。
+   * ここで別の数え方をすると「知らせたのに載っていた／載らなかったのに黙っていた」が起きる。
+   */
+  const droppedBody = ir.sections.flatMap((section) => {
+    const lines = section.blocks.reduce(
+      (sum, block) =>
+        sum + (block.type === 'paragraph' ? 1 : block.type === 'list' ? block.items.length : 0),
+      0,
+    );
+    const hasImages = section.blocks.some(
+      (block) => block.type === 'image' && block.assetId !== undefined,
+    );
+    const over = lines - bodyCapacity(section.id, hasImages);
+    return over > 0 ? [say.dropped_body(section.title, over)] : [];
+  });
+
   const missing = info.filter((warning) => warning.kind === 'missing-image');
   // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
   // 未登録があるように読めてしまう（実体はロゴ枠）。
@@ -137,6 +180,8 @@ export function checklistSummary(ir: ProposalIR): string[] {
 
   const lines = [
     ...new Set(info.filter((w) => w.kind !== 'missing-image').map((w) => w.message)),
+    ...droppedBody,
+    ...choosing,
     ...dropped,
     ...naming,
   ];

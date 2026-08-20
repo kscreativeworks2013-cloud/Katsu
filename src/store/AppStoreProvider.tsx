@@ -141,6 +141,8 @@ export function AppStoreProvider({
   const [missingAssetIds, setMissingAssetIds] = useState<string[]>([]);
   const [persistState, setPersistState] = useState<PersistState>('unsupported');
   const [quotaBytes, setQuotaBytes] = useState<number | undefined>(undefined);
+  // 問い合わせが終わるまで「取得できません」と言わない（第9章 工程R-4）。
+  const [quotaChecked, setQuotaChecked] = useState(false);
   const [migration, setMigration] = useState<
     { moved: number; unusable: number; pending: number } | undefined
   >(undefined);
@@ -212,7 +214,10 @@ export function AppStoreProvider({
   }, [projects, workspaces, provenance, runs, assets, portfolio, settings, migrationSettled]);
 
   const refreshUsage = useCallback(() => {
-    void store.usage().then((usage) => setQuotaBytes(usage.quotaBytes));
+    void store.usage().then((usage) => {
+      setQuotaBytes(usage.quotaBytes);
+      setQuotaChecked(true);
+    });
   }, [store]);
 
   /**
@@ -981,6 +986,7 @@ export function AppStoreProvider({
   const assetStorage = useMemo(
     () => ({
       usage: assetUsage(assets, missingAssetIds, quotaBytes),
+      quotaChecked,
       persist: persistState,
       missingAssetIds,
       // IndexedDB が使えない環境ではメモリ実装に落ちており、リロードで消える。
@@ -988,7 +994,16 @@ export function AppStoreProvider({
       migration,
       pendingLegacyAssetIds: Object.keys(pendingLegacy),
     }),
-    [assets, migration, missingAssetIds, pendingLegacy, persistState, quotaBytes, store],
+    [
+      assets,
+      migration,
+      missingAssetIds,
+      pendingLegacy,
+      persistState,
+      quotaBytes,
+      quotaChecked,
+      store,
+    ],
   );
 
   const value = useMemo<AppStore>(

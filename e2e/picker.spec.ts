@@ -50,3 +50,54 @@ test.describe('枠の選択', () => {
     await expect(after.getByRole('figure').filter({ hasText: 'Morning Silk' })).toHaveCount(0);
   });
 });
+
+/*
+ * 枠数1の枠（第9章 工程R-1）。
+ *
+ * チェックボックスで組んでいたときは操作できなかった：枠数に達しているので他は押せず、
+ * 唯一の選択を外すと空配列＝「既定に戻す」になって元へ戻る。表紙とコンセプトの
+ * キービジュアルがこれで、画面から一度も変更できなかった。
+ */
+test.describe('枠数1の選択', () => {
+  test('はラジオで一度に入れ替わる', async ({ page }) => {
+    await page.goto('/projects/prj-maison/proposal');
+
+    const cover = page.locator('#page-cover');
+    await cover
+      .getByText(/^掲載するキービジュアルを選ぶ/)
+      .first()
+      .click();
+
+    const options = cover.getByRole('radio');
+    await expect(options.first()).toBeChecked();
+    // 既定以外も押せる（チェックボックスのときは disabled だった）。
+    await expect(options.nth(1)).toBeEnabled();
+
+    await options.nth(1).check();
+    await expect(options.nth(1)).toBeChecked();
+    await expect(options.first()).not.toBeChecked();
+  });
+
+  test('は既定のまま確定した選択も記録する', async ({ page }) => {
+    await page.goto('/projects/prj-maison/proposal');
+
+    const cover = page.locator('#page-cover');
+    await cover
+      .getByText(/^掲載するキービジュアルを選ぶ/)
+      .first()
+      .click();
+    // すでにチェック済みのものを押す。onChange は来ないので onClick で拾っている。
+    await cover.getByRole('radio').first().click();
+
+    const picks = await page.evaluate(() => {
+      const raw = localStorage.getItem('lbvpos.state');
+      if (!raw) return null;
+      const state = JSON.parse(raw) as {
+        workspaces: Record<string, { picks?: Record<string, string[]> }>;
+      };
+      return Object.values(state.workspaces).map((w) => w.picks?.['cover-key'] ?? null);
+    });
+
+    expect(picks?.some((entry) => entry !== null && entry.length === 1)).toBe(true);
+  });
+});

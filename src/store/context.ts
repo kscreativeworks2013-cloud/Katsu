@@ -54,6 +54,12 @@ export interface AssetStorageState {
   /** IndexedDB が使えず、リロードで消える状態か。 */
   ephemeral: boolean;
   /**
+   * ブラウザへの容量問い合わせが終わったか（第9章 工程R-4）。
+   * 起動直後は未了で、これを見ずに quota の有無だけで判断すると
+   * 「利用可能量は取得できません」が一瞬出る（実測：1.5秒後には 1,115MB と出た）。
+   */
+  quotaChecked: boolean;
+  /**
    * v2 からの移行結果（第7章 7-12）。
    * moved は移せた件数、unusable はデータが壊れていて移せなかった件数、
    * pending は保存先の空きが無い等で移せず、原本に残っている件数。

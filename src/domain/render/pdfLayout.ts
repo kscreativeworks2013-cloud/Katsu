@@ -27,6 +27,7 @@ import { wrapText } from './kinsoku';
 import {
   A4_LANDSCAPE,
   ADOPTED_LAYOUT,
+  LEAD_LINES,
   MAX_MEASURE_CHARS,
   MIN_COLUMN_ITEMS,
   MIN_MEASURE_CHARS,
@@ -679,18 +680,39 @@ export async function renderLayoutPdf(
 
   first.line(
     ir.project.name,
-    { x: margin.x, y: 0.79 },
+    { x: margin.x, y: 0.775 },
     { size: first.fit(ir.project.name, 1 - margin.x * 2, first.size('title')) },
   );
   first.line(
     chrome.subtitle(ir.project.brand, ir.project.client),
-    { x: margin.x, y: 0.86 },
+    { x: margin.x, y: 0.838 },
     { size: first.size('heading'), color: palette.accent },
   );
-  // 日付は案件データの提案日であって、この PDF を作った日ではない（第8章 8-7）。
+  /*
+   * 表紙のリード（第9章 工程R-3）。
+   *
+   * 表紙は画像と題字で成立する面だが、**本文を書ける以上、書いたものが出る場所が要る**。
+   * 出ないままだと入力の消失と区別がつかない（実測：65字が黙って消えた）。
+   * 題字と日付の間に `LEAD_LINES` 行まで置く。超えた分は提出前チェックが件数で言う。
+   */
+  const coverLead = cover ? textLines(cover, chrome).slice(0, LEAD_LINES) : [];
+  const LEAD_STEP = 0.023;
+  coverLead.forEach((line, index) => {
+    first.line(
+      first.clip(line, 1 - margin.x * 2),
+      { x: margin.x, y: 0.874 + index * LEAD_STEP },
+      { size: first.size('caption'), color: palette.ink },
+    );
+  });
+
+  /*
+   * 日付は案件データの提案日であって、この PDF を作った日ではない（第8章 8-7）。
+   * リードの行数ぶん下がるが、安全マージン（下端 y=0.9286）の内側に留める。
+   * ここを越えると読ませる要素が裁ち落としに掛かる（pdfLayout.test.ts が見ている）。
+   */
   first.line(
     chrome.dateLine(ir.project.proposalDate, ir.revision),
-    { x: margin.x, y: 0.92 },
+    { x: margin.x, y: Math.min(0.874 + coverLead.length * LEAD_STEP + 0.004, 0.923) },
     { color: palette.muted },
   );
 
@@ -814,7 +836,7 @@ export async function renderLayoutPdf(
     }
     if (shown.length > 0 && section.id === 'moodboard') {
       flushDense();
-      await renderTiles(section.title, shown);
+      await renderTiles(section.title, shown, lines);
       continue;
     }
     if (shown.length > 0 && section.id === 'shots') {
@@ -989,10 +1011,32 @@ export async function renderLayoutPdf(
    * タイル面（ムードボード）。最終ページは残数に応じて列数を組み直すが、
    * 左端と列グリッドは面の中で一定に保つ（第8章 8-6）。
    */
-  async function renderTiles(title: string, blocks: ImageBlock[]): Promise<void> {
+  /**
+   * タイル面（ムードボード）。
+   * リードは**1面目だけ**、台紙の上に置く（第9章 工程R-3）。面ごとに繰り返すと、
+   * 同じ文が2面に並ぶ。載らない行は提出前チェックが件数で言う。
+   */
+  async function renderTiles(
+    title: string,
+    blocks: ImageBlock[],
+    lines: string[],
+  ): Promise<void> {
     const options = tileOptions(spec, format);
-    const area = tileArea(spec, format);
+    const base = tileArea(spec, format);
     const pad = matPadding(format);
+
+    /*
+     * リードのぶんタイル領域を下げる（第9章 工程R-3）。
+     *
+     * 見出しの下から台紙の上端までは 0.035 しかなく、そこへ流すと台紙の下に潜って
+     * タイルに隠れる（実測でそうなった）。**章全体で同じだけ**下げるので、
+     * 枠寸法は面をまたいでも変わらない（第8章 8-6 の約束を崩さない）。
+     */
+    const lead = lines.slice(0, LEAD_LINES);
+    const leadStep = 0.024;
+    const leadHeight = lead.length * leadStep;
+    const area: Rect = { ...base, y: base.y + leadHeight, h: base.h - leadHeight };
+
     const perPage = options.cols * options.rows;
     // 枠寸法は章全体で1つ。面ごとに残数から出すと、同じ枠が面によって大きさを変える。
     const cell = cellSize(blocks.length, area, options);
@@ -1016,6 +1060,16 @@ export async function renderLayoutPdf(
         palette.mat,
       );
       page.line(title, { x: margin.x, y: headTop }, { size: page.size('heading') });
+      // リードは1面目だけ。面ごとに繰り返すと同じ文が2面に並ぶ。
+      if (start === 0) {
+        lead.forEach((line, index) => {
+          page.line(
+            page.clip(line, 1 - margin.x * 2),
+            { x: margin.x, y: base.y - pad.y + 0.014 + index * leadStep },
+            { size: page.size('caption'), color: palette.muted },
+          );
+        });
+      }
 
       for (let index = 0; index < onPage; index += 1) {
         await place(page, cells[index], blocks[start + index], { edge: true });

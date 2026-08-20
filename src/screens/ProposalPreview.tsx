@@ -160,6 +160,15 @@ function SlotPicker({
   if (pool.length <= slot.capacity) return null;
   const chosen = picks ?? pool.slice(0, slot.capacity).map((item) => item.id);
 
+  /*
+   * 枠数1の枠は**選び直し**であって、増減ではない（第9章 工程R-1）。
+   *
+   * チェックボックスで組むと詰む：枠数に達しているので他は押せず、唯一の選択を外すと
+   * 空配列＝「既定に戻す」になって元へ戻る。表紙とコンセプトのキービジュアルが
+   * これで、画面から一度も変更できなかった。ラジオなら1回の操作で入れ替わる。
+   */
+  const single = slot.capacity === 1;
+
   return (
     <details className="stack" style={{ gap: 6, marginTop: 6 }}>
       <summary className="muted">
@@ -171,12 +180,29 @@ function SlotPicker({
           return (
             <label className="row" style={{ gap: 6 }} key={item.id}>
               <input
-                type="checkbox"
+                type={single ? 'radio' : 'checkbox'}
+                name={single ? `pick-${slot.id}` : undefined}
                 checked={on}
                 // 枠数に達したら、選んでいないものは押せない（先に外してもらう）。
-                disabled={!on && chosen.length >= slot.capacity}
+                // 枠数1は例外で、押した時点で入れ替える。
+                disabled={!single && !on && chosen.length >= slot.capacity}
+                /*
+                 * 既定と同じものを押したときも選択として記録する（第9章 工程R-1）。
+                 * onChange は「値が変わったとき」しか来ないので、既定のまま確定した
+                 * 意思が残らない。実測：表紙で既定の1枚を選び直したのに、提出前チェックは
+                 * 「未選択」と言い続けた。押した事実は onClick でしか拾えない。
+                 */
+                onClick={() => {
+                  if (single) onChange([item.id]);
+                }}
                 onChange={() =>
-                  onChange(on ? chosen.filter((id) => id !== item.id) : [...chosen, item.id])
+                  onChange(
+                    single
+                      ? [item.id]
+                      : on
+                        ? chosen.filter((id) => id !== item.id)
+                        : [...chosen, item.id],
+                  )
                 }
               />
               <span>{item.label}</span>

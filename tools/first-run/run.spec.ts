@@ -211,6 +211,56 @@ test('実案件1本を通す（前半：表紙〜ムードボード）', async (
     }
   });
 
+  /*
+   * 面を左右する枠を選ぶ（第9章 工程R-1）。
+   *
+   * 既定は供給元の並び順なので、放っておくと「たまたま先頭にあった写真」が表紙になる。
+   * 実際に手で通すときも、ここで選び直すことになる。
+   * 全面配置（297mm）は 200ppi に 2,339px 要るので、候補はその条件を満たすタイルに限る。
+   */
+  await timedNote('主要枠の選択（表紙・コンセプト）', async () => {
+    await page.goto(`/projects/${projectId}/proposal`);
+
+    // どのタイルが全面配置に耐えるかは、登録済みの原寸から決まる。
+    const wide = await page.evaluate(() => {
+      const raw = localStorage.getItem('lbvpos.state');
+      if (!raw) return [] as string[];
+      const state = JSON.parse(raw) as {
+        projects: { id: string; name: string }[];
+        workspaces: Record<string, { moodboard: { caption: string; assetId?: string }[] }>;
+        assets: Record<string, { variants: { kind: string; width: number }[] }>;
+      };
+      const project = state.projects.find((item) => item.name.includes('TOKYO SHADE'));
+      const tiles = project ? (state.workspaces[project.id]?.moodboard ?? []) : [];
+      return tiles
+        .filter((tile) => {
+          const original = tile.assetId
+            ? state.assets[tile.assetId]?.variants.find((v) => v.kind === 'original')
+            : undefined;
+          return (original?.width ?? 0) >= 2339;
+        })
+        .map((tile) => tile.caption);
+    });
+
+    if (wide.length < 2) return `全面配置に耐えるタイルが ${wide.length} 件しかない`;
+
+    // 既定と違うものを選ぶ。既定のままでも記録はされるが、
+    // 選び直しが反映されることを見たいので別の1枚にする。
+    for (const [sectionId, caption] of [
+      ['cover', wide[1]],
+      ['concept', wide[3] ?? wide[2]],
+    ] as const) {
+      const slot = page.locator(`#page-${sectionId}`);
+      await slot
+        .getByText(/^掲載する.*を選ぶ/)
+        .first()
+        .click();
+      // 枠数1の枠はラジオ。押した時点で入れ替わる（第9章 工程R-1）。
+      await slot.getByRole('radio', { name: caption }).check();
+    }
+    return `全面配置に耐えるタイル ${wide.length} 件から選択`;
+  });
+
   // ── 本文を実物の分量で入れる（前半5章）────────────────
   await page.goto(`/projects/${projectId}/proposal`);
   for (const id of FRONT_HALF) {
