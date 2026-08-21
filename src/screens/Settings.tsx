@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Language, ModelAssignment } from '../data/types';
-import { storageIsTight, storagePressure, variantOf } from '../domain/assets';
+import { storageReadout, variantOf } from '../domain/assets';
 import { LANGUAGE_LABEL } from '../data/workflow';
 import { createId } from '../lib/projects';
 import { PERSIST_STATE_LABEL, persistNotice } from '../lib/storagePersistence';
@@ -119,6 +119,7 @@ function BackupCard() {
 export function SettingsScreen() {
   const { settings, updateSettings, assets, assetStorage, removeAsset } = useAppStore();
   const usage = assetStorage.usage;
+  const readout = storageReadout(usage, assetStorage.quotaChecked);
   const missing = assetStorage.missingAssetIds
     .map((id) => assets[id])
     .filter((asset) => asset !== undefined);
@@ -232,26 +233,17 @@ export function SettingsScreen() {
         title="画像の保存容量"
         description="原寸はブラウザ内（IndexedDB）に保存します。上限はブラウザが空き容量に応じて決めるため、固定値はありません。"
       >
-        <p className="lede">
-          {Math.round(usage.bytes / 1_000_000).toLocaleString()}MB 使用
-          {usage.quotaBytes
-            ? `（この端末の利用可能量の目安 ${Math.round(usage.quotaBytes / 1_000_000).toLocaleString()}MB）`
-            : assetStorage.quotaChecked
-              ? '（利用可能量はこの環境では取得できません）'
-              : '（利用可能量を確認しています…）'}
-        </p>
-
         {/*
-          逼迫の判定は「アプリが数えた実体の合計 ÷ ブラウザの見積もる quota」で行う
-          （第9章 工程R-4）。estimate() の usage は実測で桁が合わなかったので使わない。
+          容量の表示は3状態を混ぜない（第9章 工程N-2）。
+          確認中／取得不能／N% 使用中。取得不能でも使用量そのものは出せる。
         */}
-        {storageIsTight(usage) && (
-          <p className="form-error" role="status" style={{ marginTop: 8 }}>
-            保存領域の
-            {Math.round((storagePressure(usage) ?? 0) * 100)}
-            %を使っています。これ以上の登録は失敗することがあります。不要な画像を解除するか、書き出してから整理してください。
-          </p>
-        )}
+        <p className="lede">
+          {readout.kind === 'checking' && '使用量を確認しています…'}
+          {readout.kind === 'unknown' &&
+            `${Math.round(readout.bytes / 1_000_000).toLocaleString()}MB 使用（この環境では利用可能量を取得できないため、使用率は出せません）`}
+          {readout.kind === 'known' &&
+            `${Math.round(readout.bytes / 1_000_000).toLocaleString()}MB 使用／${Math.round(readout.quotaBytes / 1_000_000).toLocaleString()}MB（${readout.percent}%）`}
+        </p>
         <p className="muted" style={{ marginTop: 10 }}>
           原寸あり {usage.originalCount}件／表示用のみ {usage.previewOnlyCount}件／参照のみ{' '}
           {usage.referenceOnlyCount}件／失われた画像 {usage.missingCount}件

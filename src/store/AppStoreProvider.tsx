@@ -21,7 +21,7 @@ import type {
   StepRecord,
   Workspace,
 } from '../data/types';
-import { assetUsage, detectMissingAssets } from '../domain/assets';
+import { assetUsage, detachAsset, detectMissingAssets } from '../domain/assets';
 import { createIndexedDbStore } from '../lib/indexedDbStore';
 import { variantKey, type AssetBinaryStore } from '../domain/assetStore';
 import {
@@ -827,20 +827,13 @@ export function AppStoreProvider({
         delete next[assetId];
         return next;
       });
-      // 参照している側からも外す。参照だけが残ると、解決できない assetId が漂う（第7章 7-6）。
+      // 参照している側からも外す。参照だけが残ると、解決できない assetId が漂う（第7章 7-10）。
+      // 枠ごとの列挙は detachAsset が持つ（枠を増やしたときの直し忘れを1か所に閉じる）。
       setWorkspaces((current) =>
         Object.fromEntries(
           Object.entries(current).map(([projectId, workspace]) => [
             projectId,
-            {
-              ...workspace,
-              moodboard: workspace.moodboard.map((tile) =>
-                tile.assetId === assetId ? { ...tile, assetId: null } : tile,
-              ),
-              shots: workspace.shots.map((shot) =>
-                shot.assetId === assetId ? { ...shot, assetId: null } : shot,
-              ),
-            },
+            detachAsset(workspace, assetId),
           ]),
         ),
       );

@@ -9,6 +9,7 @@ import {
   pickVariant,
   requiredPixels,
   resolveAsset,
+  detachAsset,
 } from './assets';
 import { variantKey } from './assetStore';
 
@@ -122,5 +123,31 @@ describe('消失の検出（第7章 7-11）', () => {
     ]);
 
     expect(orphans).toEqual([variantKey('ast-old', 'original')]);
+  });
+});
+
+/*
+ * 削除したアセットへの参照の掃除（第7章 7-10／第9章 工程N-1）。
+ * 競合とロゴは第8章で画像を持つようになったが、掃除の対象に入っていなかった。
+ */
+describe('detachAsset', () => {
+  const workspace = {
+    moodboard: [{ assetId: 'ast-1' }, { assetId: 'ast-2' }],
+    shots: [{ assetId: 'ast-1' }],
+    competitors: [{ assetId: 'ast-1' }, { assetId: null }],
+    logoAssetId: 'ast-1',
+  };
+
+  it('は全ての参照元から assetId を外す', () => {
+    const next = detachAsset(workspace, 'ast-1');
+
+    expect(next.moodboard).toEqual([{ assetId: null }, { assetId: 'ast-2' }]);
+    expect(next.shots).toEqual([{ assetId: null }]);
+    expect(next.competitors).toEqual([{ assetId: null }, { assetId: null }]);
+    expect(next.logoAssetId).toBeNull();
+  });
+
+  it('は他のアセットを触らない', () => {
+    expect(detachAsset(workspace, 'ast-9')).toEqual(workspace);
   });
 });

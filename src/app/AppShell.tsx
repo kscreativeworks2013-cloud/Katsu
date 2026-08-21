@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation, useMatch } from 'react-router-dom';
 import { WORKFLOW_STEPS } from '../domain/steps';
+import { storageIsTight } from '../domain/assets';
 import { useAppStore } from '../store/context';
 import { Sidebar } from './Sidebar';
 
@@ -69,6 +70,29 @@ export function AppShell() {
           {saveOutcome.status === 'failed' && (
             <p className="form-error" role="alert">
               {saveOutcome.message}
+            </p>
+          )}
+          {/*
+            保存先そのものに触れない環境（プライベートモード等）。
+            failed だけを見ていると、1文字も保存されていないのに画面は無言だった
+            （第9章 工程N-1）。
+          */}
+          {saveOutcome.status === 'unavailable' && (
+            <p className="form-error" role="alert">
+              この環境ではブラウザに保存できません。閉じると入力内容は失われます。
+              <Link to="/settings">設定</Link>から書き出してファイルで保管してください。
+            </p>
+          )}
+          {/*
+            上限接近の警告帯（第6章 6-9／第9章 工程N-1）。
+            設定画面だけに出していると、画像を登録している画面では気づけない。
+          */}
+          {storageIsTight(assetStorage.usage) && (
+            <p className="form-error" role="alert">
+              画像の保存領域が上限に近づいています（
+              {Math.round(assetStorage.usage.bytes / 1_000_000).toLocaleString()}MB 使用）。
+              これ以上の登録は失敗することがあります。
+              <Link to="/settings">設定</Link>で不要な画像を解除してください。
             </p>
           )}
           {/* 画像が失われた／消えうる状態も同じく黙らせない（第7章 7-11）。 */}

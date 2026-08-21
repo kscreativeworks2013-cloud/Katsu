@@ -100,16 +100,52 @@ export interface AssetUsage {
  */
 export const STORAGE_WARN_RATIO = 0.8;
 
+/**
+ * 割合とは別に持つ絶対量の下限（第9章 工程N-2）。
+ *
+ * quota はブラウザによって桁が違い、Safari は大幅に小さいうえ `estimate()` が
+ * 使えないこともある。割合だけで判定すると、quota が大きく出るブラウザでは
+ * 何GB溜めても警告が出ず、quota が取れないブラウザでは**永久に判定できない**。
+ * 原寸を扱う以上、実運用で溜まる量には上限の目安があるほうがよい
+ * （実測：11面の案件1本で 5.7MB。500MB は案件80本ぶんに相当する）。
+ */
+export const STORAGE_WARN_BYTES = 500 * 1024 * 1024;
+
 /** 保存領域の逼迫度。quota が取れない環境では判定しない（undefined）。 */
 export function storagePressure(usage: AssetUsage): number | undefined {
   if (!usage.quotaBytes || usage.quotaBytes <= 0) return undefined;
   return usage.bytes / usage.quotaBytes;
 }
 
-/** 逼迫していて、これ以上の登録が失敗しうる状態か。 */
+/**
+ * 逼迫していて、これ以上の登録が失敗しうる状態か。
+ *
+ * 割合と絶対量の**どちらか**が閾値を越えたら逼迫とする。
+ * quota が取れなくても絶対量では判定できるので、判定不能で素通しにはならない。
+ */
 export function storageIsTight(usage: AssetUsage): boolean {
   const ratio = storagePressure(usage);
-  return ratio !== undefined && ratio >= STORAGE_WARN_RATIO;
+  return (
+    (ratio !== undefined && ratio >= STORAGE_WARN_RATIO) || usage.bytes >= STORAGE_WARN_BYTES
+  );
+}
+
+/** 画面に出す容量の状態（第9章 工程N-2）。3つを混ぜない。 */
+export type StorageReadout =
+  | { kind: 'checking' }
+  | { kind: 'unknown'; bytes: number }
+  | { kind: 'known'; bytes: number; quotaBytes: number; percent: number };
+
+export function storageReadout(usage: AssetUsage, quotaChecked: boolean): StorageReadout {
+  if (!quotaChecked) return { kind: 'checking' };
+  const ratio = storagePressure(usage);
+  if (ratio === undefined) return { kind: 'unknown', bytes: usage.bytes };
+  return {
+    kind: 'known',
+    bytes: usage.bytes,
+    quotaBytes: usage.quotaBytes as number,
+    percent: Math.round(ratio * 100),
+  };
 }
 
 export function assetUsage(
@@ -168,3 +204,31 @@ export const ASSET_ORIGIN_LABEL: Record<Asset['origin'], string> = {
   external: '外部参照',
   ai: 'AI生成',
 };
+
+/**
+ * 削除したアセットへの参照を、案件データから外す（第7章 7-10）。
+ *
+ * 参照だけが残ると解決できない assetId が漂う。**画像を持つ枠を増やしたら、必ずここに足す。**
+ * 実測：競合とロゴは第8章で画像を持つようになったが、掃除の対象に入っておらず、
+ * 削除しても参照が残っていた（第9章 工程N-1 の洗い出しで発見）。
+ * 関数にまとめてあるのは、次に枠が増えたとき「ここを直せばよい」を1か所にするため。
+ */
+export function detachAsset<
+  T extends {
+    moodboard: { assetId?: string | null }[];
+    shots: { assetId?: string | null }[];
+    competitors: { assetId?: string | null }[];
+    logoAssetId?: string | null;
+  },
+>(workspace: T, assetId: string): T {
+  const clear = <U extends { assetId?: string | null }>(items: U[]): U[] =>
+    items.map((item) => (item.assetId === assetId ? { ...item, assetId: null } : item));
+
+  return {
+    ...workspace,
+    moodboard: clear(workspace.moodboard),
+    shots: clear(workspace.shots),
+    competitors: clear(workspace.competitors),
+    logoAssetId: workspace.logoAssetId === assetId ? null : workspace.logoAssetId,
+  };
+}
