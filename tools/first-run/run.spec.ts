@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
-import { BODY_BY_ID, FRONT_HALF, PROJECT, SECTIONS } from './treatment';
+import { BACK_HALF, BODY_BY_ID, FRONT_HALF, PROJECT, SECTIONS } from './treatment';
 
 /*
  * 実案件1本の通し（第9章）。
@@ -34,6 +34,23 @@ const MOOD_PHOTOS = [
 
 /** 実績に使う写真。ムードボードとは重ならない。 */
 const WORK_PHOTOS = ['10-work-shirt.jpg', '11-work-runway.jpg', '12-work-ring.jpg'];
+
+/**
+ * 絵コンテに使う写真。参考カットも同じ供給元（ショットリスト）から offset で引くので、
+ * ここを埋めれば両方が埋まる。
+ *
+ * 手元にあるのは6点。生成されるカットは7本なので、**カットを6本に減らして揃える**。
+ * 本文（treatment.ts）が Cut 1〜6 の6カットしか書いていないので、
+ * 7本目は素材が無いから消すのではなく、**企画と合っていないから消す**のが筋である。
+ */
+const SHOT_PHOTOS = [
+  '04-shot.jpg',
+  '05-shot-wide.jpg',
+  '06-shot-gold.jpg',
+  '07-shot-gray.jpg',
+  '08-shot-hands.jpg',
+  '09-shot-image.jpg',
+];
 
 interface Measure {
   label: string;
@@ -85,7 +102,7 @@ async function storage(page: Page): Promise<{ used?: number; quota?: number }> {
 
 test.describe.configure({ mode: 'serial' });
 
-test('実案件1本を通す（前半：表紙〜ムードボード）', async ({ page }) => {
+test('実案件1本を通す（全11章）', async ({ page }) => {
   mkdirSync(OUT_DIR, { recursive: true });
   expect(existsSync(PHOTO_DIR), `素材が要る：${PHOTO_DIR}`).toBe(true);
 
@@ -299,6 +316,89 @@ test('実案件1本を通す（前半：表紙〜ムードボード）', async (
     });
   }
 
+  // ── 絵コンテを登録する（後半）────────────────────────
+  await timedNote('カットの整理と絵コンテ6点の登録', async () => {
+    await page.goto(`/projects/${projectId}/shots`);
+
+    // 本文は6カット。生成された余りを落として企画と揃える。
+    // 削除はショットリスト表示にしかない（絵コンテ表示には出ない）。
+    const removals: string[] = [];
+    for (;;) {
+      const buttons = page.getByRole('button', { name: /^カット\d+を削除$/ });
+      if ((await buttons.count()) <= SHOT_PHOTOS.length) break;
+      removals.push((await buttons.last().getAttribute('aria-label')) ?? '');
+      await buttons.last().click();
+    }
+
+    // 絵コンテの画像は「絵コンテ」表示にしないと登録できない（第9章 工程N-12）。
+    await page.getByRole('tab', { name: '絵コンテ' }).click();
+
+    const pickers = page.getByRole('button', { name: /に画像を登録$/ });
+    for (const file of SHOT_PHOTOS) {
+      const picker = pickers.first();
+      const label = (await picker.getAttribute('aria-label')) ?? '';
+      const name = label.replace(/に画像を登録$/, '');
+      await picker.click();
+      await page.getByLabel(`${name}の画像ファイル`).setInputFiles(photo(file));
+      await expect(page.getByRole('img', { name }).first()).toBeVisible({ timeout: 20_000 });
+    }
+    return `カットを${removals.length}本落として6本に揃え、6点を登録`;
+  });
+
+  // ── 本文を実物の分量で入れる（後半6章）────────────────
+  await page.goto(`/projects/${projectId}/proposal`);
+  for (const id of BACK_HALF) {
+    const lines = BODY_BY_ID.get(id);
+    if (!lines) continue;
+    await timed(`本文入力：${id}（${lines.join('').length}字）`, async () => {
+      const chapter = page.locator(`#page-${id}`);
+      await chapter.getByRole('button', { name: 'この章を編集' }).click();
+      await chapter.getByLabel('本文（日本語）').fill(lines.join('\n'));
+      await chapter.getByRole('button', { name: '編集を終える' }).click();
+      await expect(chapter.getByText('手動編集済み（再生成から保護）')).toBeVisible();
+    });
+
+    await timedNote(`書き出し：${id} まで`, async () => {
+      await page.goto('/settings');
+      const waitFor = page.waitForEvent('download');
+      await page.getByRole('button', { name: '画像を含めて書き出す' }).click();
+      const file = await waitFor;
+      const path = `${OUT_DIR}/backup-${id}.json`;
+      await file.saveAs(path);
+      await page.goto(`/projects/${projectId}/proposal`);
+      return `${readFileSync(path).byteLength.toLocaleString()} バイト`;
+    });
+  }
+
+  /*
+   * 日本語だけ編集した章を再生成し、英語版が固定されるかを見る（第9章 実施要領3）。
+   * 日英分離（9-12）の優先度を決める根拠になる。
+   */
+  const englishAfterRegenerate = await timed('日英の保護を確かめる', async () => {
+    await page.goto(`/projects/${projectId}/proposal?lang=en`);
+    const before = (await page.locator('#page-risk').innerText()).trim();
+
+    await page.goto(`/projects/${projectId}/proposal`);
+    await page.getByRole('button', { name: '提案書を生成' }).first().click();
+    const preview = page.getByRole('region', { name: '生成結果の差分プレビュー' });
+    await expect(preview).toBeVisible({ timeout: 30_000 });
+
+    /*
+     * 全章を手で書いたあとの再生成では、保護されたフィールドが既定で外れるので
+     * 適用ボタンが押せない。**これが日英分離を判断する材料そのもの**である：
+     * 日本語を守ると英語版も一緒に守られ、英語版だけを作り直す手段が無い。
+     */
+    const apply = preview.getByRole('button', { name: '選択したフィールドを適用' });
+    const applyEnabled = await apply.isEnabled();
+    if (applyEnabled) await apply.click();
+    else await preview.getByRole('button', { name: '破棄' }).click();
+    await expect(preview).toBeHidden({ timeout: 30_000 });
+
+    await page.goto(`/projects/${projectId}/proposal?lang=en`);
+    const after = (await page.locator('#page-risk').innerText()).trim();
+    return { applyEnabled, unchanged: before === after, sample: after.slice(0, 140) };
+  });
+
   // ── 出力 ──────────────────────────────────────────────
   // 端末の保存状況は2つ採る。アプリ自身が数えている実体の合計と、ブラウザの見積もり。
   // 後者は粒度が粗く、前者と桁が合わないことがある（合わなければそれ自体が報告対象）。
@@ -322,16 +422,27 @@ test('実案件1本を通す（前半：表紙〜ムードボード）', async (
     const confirm = page.getByRole('button', { name: 'このまま出力する' });
     if (await confirm.isVisible({ timeout: 3_000 }).catch(() => false)) await confirm.click();
     const file = await waitFor;
-    await file.saveAs(`${OUT_DIR}/front-half-ja.pdf`);
+    await file.saveAs(`${OUT_DIR}/full-ja.pdf`);
   });
 
-  const pdfBytes = readFileSync(`${OUT_DIR}/front-half-ja.pdf`).byteLength;
+  const pdfBytes = readFileSync(`${OUT_DIR}/full-ja.pdf`).byteLength;
+
+  await timed('PDF 出力（英語）', async () => {
+    await page.goto(`/projects/${projectId}/export`);
+    await page.getByLabel('言語').selectOption('en');
+    const waitFor = page.waitForEvent('download');
+    await page.getByRole('button', { name: '出力を実行' }).click();
+    const confirm = page.getByRole('button', { name: 'このまま出力する' });
+    if (await confirm.isVisible({ timeout: 3_000 }).catch(() => false)) await confirm.click();
+    await (await waitFor).saveAs(`${OUT_DIR}/full-en.pdf`);
+  });
 
   writeFileSync(
     `${OUT_DIR}/measures.json`,
     JSON.stringify(
       {
         projectId,
+        englishAfterRegenerate,
         appUsage,
         storage: used,
         pdfBytes,

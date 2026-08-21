@@ -178,3 +178,6 @@ export const BODY_BY_ID = new Map(SECTIONS.map((section) => [section.id, section
 
 /** 前半（(a) の報告単位）。 */
 export const FRONT_HALF = ['cover', 'brand', 'competitors', 'concept', 'moodboard'];
+
+/** 後半（(b) の報告単位）。 */
+export const BACK_HALF = ['shots', 'lighting', 'works', 'staff', 'schedule', 'budget', 'risk'];

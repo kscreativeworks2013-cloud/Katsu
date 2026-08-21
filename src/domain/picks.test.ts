@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { seedPortfolio } from '../data/fixtures';
 import { workspaceWithBody } from '../test/ir';
+import { slotWidthMm } from './render/layout';
 import {
   PROPOSAL_TEMPLATE,
   claimedItemIds,
@@ -119,5 +120,81 @@ describe('既定割当と明示選択', () => {
       claimed,
     );
     expect(images).toHaveLength(2);
+  });
+});
+
+/*
+ * 枠一覧と、枠ごとに何かする処理の突き合わせ（第9章 工程N-9）。
+ *
+ * `slotWidthRatio` は枠種を列挙する唯一の場所として残っている（枠ごとに面付けが
+ * 違うという事実そのものなので導出できない）。列挙が残る以上、**枠を足したときに
+ * 気づける仕掛け**が要る。ここが「全枠に値がある」ことと「既定で画像帯に落ちた枠が
+ * 本当に帯でよいか」を、一覧の側から確かめる。
+ */
+describe('枠一覧と配置幅', () => {
+  const slots = PROPOSAL_TEMPLATE.flatMap((section) => section.imageSlots);
+
+  it('は全ての枠に配置幅を返す', () => {
+    for (const slot of slots) {
+      const width = slotWidthMm(slot.id, Number.isFinite(slot.capacity) ? slot.capacity : 6);
+      expect(width, slot.id).toBeGreaterThan(0);
+      expect(width, slot.id).toBeLessThanOrEqual(297);
+    }
+  });
+
+  it('は全面配置の枠を判型いっぱいに置く', () => {
+    for (const id of ['cover-key', 'concept-key']) {
+      expect(slotWidthMm(id, 1)).toBe(297);
+    }
+  });
+
+  /*
+   * 既定（画像帯）に落ちている枠の一覧を固定する。
+   * 枠を足すと黙ってここへ入るので、増えたら**帯でよいかを確かめてから**この配列を更新する。
+   */
+  it('は既定の画像帯に落ちる枠を明示する', () => {
+    const banded = slots
+      .filter((slot) => {
+        const width = slotWidthMm(slot.id, 3);
+        return width !== 297 && slot.id !== 'cover-logo' && !SIZED_BY_GRID.includes(slot.id);
+      })
+      .map((slot) => slot.id);
+
+    expect(banded).toEqual(['brand-mood', 'competitor-refs', 'lighting-refs', 'works-grid']);
+  });
+});
+
+/** 格子から寸法が決まる枠（帯ではない）。 */
+const SIZED_BY_GRID = ['mood-tiles', 'shot-frames'];
+
+/*
+ * ロゴ枠の性質（第9章 工程N-8）。
+ * 供給元が1点しかない枠で、他の枠と同じ扱いにすると意味が壊れる。
+ */
+describe('ロゴ枠', () => {
+  const logo = PROPOSAL_TEMPLATE.flatMap((section) => section.imageSlots).find(
+    (slot) => slot.id === 'cover-logo',
+  )!;
+
+  it('は供給元を全点見せる枠ではない（1点しか無い）', () => {
+    expect(logo.exhaustive).toBeUndefined();
+  });
+
+  it('は選ぶ余地が無い（供給元1点・枠1つ）', () => {
+    expect(slotHasChoice(logo, 1)).toBe(false);
+    expect(slotHasChoice(logo, 0)).toBe(false);
+  });
+
+  /*
+   * 導出上は「道具が絞る枠」に当たるが、供給元が枠数を超えないので
+   * 未選択としては数えない（数えると、選びようのない枠を常に指摘し続ける）。
+   */
+  it('は主要枠に当たるが、選ぶ余地が無いので未選択とは数えない', () => {
+    expect(slotIsPrincipal(logo)).toBe(true);
+    expect(slotHasChoice(logo, 1)).toBe(false);
+  });
+
+  it('は説明文を持たない枠として扱う（キャプションを描かない）', () => {
+    expect(logo.source).toBe('logo');
   });
 });

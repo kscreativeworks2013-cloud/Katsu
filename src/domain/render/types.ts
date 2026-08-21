@@ -7,6 +7,16 @@ import type { ExportFormat } from '../../data/types';
 import type { ProposalIR } from '../ir';
 import { bodyCapacity } from './layout';
 
+/**
+ * 出典の文言に含まれていれば「申告と実体が合っている」と見なす語（第9章 工程N-11）。
+ * 生成側が書く出典は自由文なので、完全一致ではなく語の有無で照合する。
+ */
+const ORIGIN_WORD: Record<string, string> = {
+  upload: '持ち込み',
+  external: '外部',
+  ai: 'AI',
+};
+
 export interface RenderedFile {
   fileName: string;
   mimeType: string;
@@ -78,6 +88,8 @@ const SUMMARY = {
       `上流の変更が反映されていない章が${titles.length}件あります（${titles.join('、')}）。`,
     defaultAxes: (x: string, y: string) =>
       `ポジショニングマップの軸は既定のままです（${x}／${y}）。本文で別の軸を述べている場合は食い違って読めます。`,
+    staleCaption: (count: number) =>
+      `説明文が生成時のままの画像が${count}件あります。写真は後から登録されているので、説明文が実際の絵と合っているか見直してください。`,
     join: '、',
     outsideSection: '章外',
   },
@@ -97,6 +109,8 @@ const SUMMARY = {
       `${titles.length} chapter(s) have not picked up upstream changes (${titles.join(', ')}).`,
     defaultAxes: (x: string, y: string) =>
       `The positioning map still uses the default axes (${x} / ${y}). If the body text names different ones, the page contradicts itself.`,
+    staleCaption: (count: number) =>
+      `${count} image(s) still carry the caption the generator wrote. The photographs were registered afterwards — check that the words still describe the picture.`,
     join: ', ',
     outsideSection: 'unassigned',
   },
@@ -207,6 +221,34 @@ export function checklistSummary(ir: ProposalIR): string[] {
       return say.defaultAxes(map.axes.x.join('⇄'), map.axes.y.join('⇄'));
     });
 
+  /*
+   * 説明文が生成時のまま取り残されていないか（第9章 工程N-11）。
+   *
+   * ムードボードは「採用コンセプト」からタイルを生成し、そこに説明文と出典を書く。
+   * 写真はそのあと人が登録する。**上流（コンセプト）が変わっていなければ stale にならない**
+   * ——依存関係としてはそれで正しい。だが説明文が写真と合っているかは別の話で、
+   * stale では拾えない。実測：「ガラスと液体の透過」に黄色いサングラスの人物が入った。
+   *
+   * 手がかりは出典の食い違いである。タイルが「AI生成」と申告しているのに実体が
+   * 持ち込み写真なら、説明文もその時点のまま取り残されている可能性が高い。
+   * タイル単位の provenance があれば直接判定できるが、それは第5章の持ち越し
+   * （コレクション内のアイテム単位マージ）でスキーマに触れる。
+   */
+  const staleCaptions = ir.sections
+    .flatMap((section) => section.blocks)
+    .filter((block) => {
+      if (block.type !== 'image') return false;
+      const { assetOrigin, declaredSource } = block;
+      if (assetOrigin === undefined || declaredSource === undefined) return false;
+      // 別の出自を名指ししているものだけを数える。出自を名指ししていない出典
+      //（「手動追加」「過去作品」）は、古いのか人が書いたのか区別できないので数えない。
+      // 取りこぼす側に倒している——身に覚えのない指摘は、指摘そのものを信用させなくする。
+      return Object.entries(ORIGIN_WORD).some(
+        ([origin, word]) => origin !== assetOrigin && declaredSource.includes(word),
+      );
+    }).length;
+  const captions = staleCaptions > 0 ? [say.staleCaption(staleCaptions)] : [];
+
   const missing = info.filter((warning) => warning.kind === 'missing-image');
   // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
   // 未登録があるように読めてしまう（実体はロゴ枠）。
@@ -223,6 +265,7 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const lines = [
     ...new Set(info.filter((w) => w.kind !== 'missing-image').map((w) => w.message)),
     ...droppedBody,
+    ...captions,
     ...defaultAxes,
     ...choosing,
     ...dropped,

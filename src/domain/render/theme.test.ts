@@ -66,3 +66,37 @@ describe('deriveTheme', () => {
     expect(deriveTheme(undefined).paper).toBe(deriveTheme([]).paper);
   });
 });
+
+/*
+ * 台紙の色がブランドカラーから動くか（第9章 工程R-12）。
+ * 固定値が残っていないことと、**どれだけ動くか**を数字で残す。
+ * 実測では差し色を変えても RGB で 2〜4 しか動かず、目では判別できない。
+ */
+describe('台紙の導出', () => {
+  const withAccent = (hex: string) =>
+    deriveTheme([{ hex: '#12100E' }, { hex: '#F3ECE2' }, { hex }, { hex: '#4A4A46' }]);
+
+  it('は差し色を変えると値が変わる（固定値ではない）', () => {
+    expect(withAccent('#B3936A').mat).not.toBe(withAccent('#8A6A4B').mat);
+    expect(withAccent('#B3936A').matEdge).not.toBe(withAccent('#8A6A4B').matEdge);
+  });
+
+  it('は紙の明度を基準にしているので、差し色の影響は小さい', () => {
+    const a = withAccent('#B3936A').mat;
+    const b = withAccent('#8A6A4B').mat;
+    const channels = (hex: string) =>
+      [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16));
+
+    const delta = channels(a).map((value, index) => Math.abs(value - channels(b)[index]));
+    // 混色比 0.08。ここを上げれば見て分かる差になるが、台紙が色づくと写真の見え方に響く。
+    expect(Math.max(...delta)).toBeLessThan(16);
+    expect(Math.max(...delta)).toBeGreaterThan(0);
+  });
+
+  it('は差し色を大きく振っても紙より暗く保つ', () => {
+    for (const hex of ['#B3936A', '#8A6A4B', '#204080']) {
+      const theme = withAccent(hex);
+      expect(theme.mat < theme.paper).toBe(true);
+    }
+  });
+});

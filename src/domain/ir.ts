@@ -87,6 +87,12 @@ export type IRBlock =
       fallback?: { from: string; to: string };
       /** 切り出し位置の指定（第8章 8-7）。無指定ならレンダラの既定で切る。 */
       focus?: CropFocus;
+      /**
+       * 供給元が申告している出典（第9章 工程N-11）。実際のアセットの出自と
+       * 食い違うとき、説明文も生成時のまま取り残されている可能性が高い。
+       * 版面には出さない——提出前チェックの材料としてだけ持つ。
+       */
+      declaredSource?: string;
     };
 
 /** 章の出所。どの Run が書いた値から作られたかを後から言えるようにする（第6章 6-3）。 */
@@ -410,6 +416,7 @@ function imageBlocks(
           height: original.height,
           bytes: original.bytes,
         },
+        declaredSource: image.declaredSource,
         href: isExternal ? asset?.source : undefined,
         fallback: image.fallback,
         focus: image.focus,

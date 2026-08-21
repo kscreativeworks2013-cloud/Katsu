@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestIR, testAsset, workspaceWithAsset } from '../../test/ir';
-import { checklistSummary } from './types';
+import { checklistSummary, warningSummary } from './types';
 
 /*
  * 提出前チェック（第8章 8-7）。
@@ -247,5 +247,151 @@ describe('版面に載らない本文', () => {
     const lines = checklistSummary(withBody(ir, 'brand', 12));
 
     expect(lines.some((line) => line.includes('版面に載りません'))).toBe(false);
+  });
+});
+
+/*
+ * 説明文が生成時のまま取り残されていないか（第9章 工程N-11）。
+ * 実測：ムードボードの「ガラスと液体の透過」に黄色いサングラスの人物が入っていた。
+ * 上流（コンセプト）が変わっていないので stale では拾えない。
+ */
+describe('生成時のままの説明文', () => {
+  function withSource(
+    ir: ReturnType<typeof buildTestIR>,
+    declaredSource: string,
+    assetOrigin: 'upload' | 'ai' | 'external',
+  ) {
+    return {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0, chosen: true })),
+      sections: ir.sections.map((section) => ({
+        ...section,
+        blocks: section.blocks.map((block) =>
+          block.type === 'image' ? { ...block, declaredSource, assetOrigin } : block,
+        ),
+      })),
+    };
+  }
+
+  it('は出典が別の出自を名指ししていれば件数を出す', () => {
+    const ir = buildTestIR();
+    const line = checklistSummary(withSource(ir, 'AI生成', 'upload')).find((item) =>
+      item.includes('生成時のまま'),
+    );
+
+    expect(line).toMatch(/説明文が生成時のままの画像が\d+件あります/);
+  });
+
+  it('は出自が一致していれば出さない', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary(withSource(ir, 'AI生成', 'ai'));
+
+    expect(lines.some((line) => line.includes('生成時のまま'))).toBe(false);
+  });
+
+  /*
+   * 出自を名指ししていない出典は、古いのか人が書いたのか区別できない。
+   * 取りこぼす側に倒す——身に覚えのない指摘は、指摘そのものを信用させなくする。
+   */
+  it('は出自を名指ししていない出典を数えない', () => {
+    const ir = buildTestIR();
+    for (const source of ['手動追加', '過去作品']) {
+      const lines = checklistSummary(withSource(ir, source, 'upload'));
+      expect(lines.some((line) => line.includes('生成時のまま'))).toBe(false);
+    }
+  });
+});
+
+/*
+ * stale の集約と、警告の並び（第9章 工程R-6・N-10）。
+ * 章ごとに1行ずつ並べると、本文を手で入れた直後は下流が一斉に stale になって
+ * 面が列挙で埋まる。実測：8行並び、148ppi の警告がその2行目に埋もれた。
+ */
+describe('警告の要約', () => {
+  function withWarnings(
+    ir: ReturnType<typeof buildTestIR>,
+    warnings: ReturnType<typeof buildTestIR>['warnings'],
+  ) {
+    return { ...ir, warnings };
+  }
+
+  const resolution = {
+    kind: 'low-resolution' as const,
+    severity: 'warn' as const,
+    sectionId: 'concept',
+    message: '解像度が不足しています',
+  };
+
+  it('は stale を1行にまとめ、章名を並べる', () => {
+    const ir = buildTestIR();
+    const stale = ir.sections.slice(0, 3).map((section) => ({
+      kind: 'stale' as const,
+      severity: 'warn' as const,
+      sectionId: section.id,
+      message: `${section.title}は上流の変更が反映されていません。`,
+    }));
+
+    const lines = warningSummary(withWarnings(ir, stale));
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/反映されていない章が3件あります/);
+    for (const section of ir.sections.slice(0, 3)) {
+      expect(lines[0]).toContain(section.title);
+    }
+  });
+
+  it('は個別の警告を stale より先に置く', () => {
+    const ir = buildTestIR();
+    const stale = {
+      kind: 'stale' as const,
+      severity: 'warn' as const,
+      sectionId: 'cover',
+      message: '表紙は上流の変更が反映されていません。',
+    };
+
+    const lines = warningSummary(withWarnings(ir, [stale, resolution]));
+
+    expect(lines[0]).toBe('解像度が不足しています');
+    expect(lines[1]).toMatch(/反映されていない章が1件/);
+  });
+
+  it('は stale が無ければ何も足さない', () => {
+    const ir = buildTestIR();
+    expect(warningSummary(withWarnings(ir, [resolution]))).toEqual(['解像度が不足しています']);
+  });
+});
+
+/*
+ * 軸ラベルが既定のまま（第9章 工程R-8・N-10）。
+ * 編集の導線はスキーマ v4 が要るので、いまは既定であることを言うに留める。
+ */
+describe('ポジショニングマップの軸', () => {
+  function withAxes(ir: ReturnType<typeof buildTestIR>, axesAreDefault: boolean) {
+    return {
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0, chosen: true })),
+      sections: ir.sections.map((section) => ({
+        ...section,
+        blocks: section.blocks.map((block) =>
+          block.type === 'map' ? { ...block, axesAreDefault } : block,
+        ),
+      })),
+    };
+  }
+
+  it('は既定のままなら軸名を添えて知らせる', () => {
+    const line = checklistSummary(withAxes(buildTestIR(), true)).find((item) =>
+      item.includes('軸は既定'),
+    );
+
+    expect(line).toContain('クラシック⇄モダン');
+    expect(line).toContain('ミニマル⇄ドラマティック');
+  });
+
+  it('は編集済みなら出さない', () => {
+    const lines = checklistSummary(withAxes(buildTestIR(), false));
+    expect(lines.some((line) => line.includes('軸は既定'))).toBe(false);
   });
 });

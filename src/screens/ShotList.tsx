@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { Shot } from '../data/types';
+import { resolveAsset } from '../domain/assets';
 import { createId } from '../lib/projects';
+import { AssetImage } from '../ui/AssetImage';
+import { AssetPicker } from '../ui/AssetPicker';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
 import { Badge, Card, EmptyState, PageHeader, Skeleton } from '../ui/primitives';
 
@@ -15,7 +18,7 @@ const PRIORITY_LABEL: Record<Shot['priority'], string> = {
 export function ShotListScreen() {
   const { projectId = '' } = useParams();
   const { project, workspace } = useProject(projectId);
-  const { requestRun, editField } = useAppStore();
+  const { requestRun, editField, assets } = useAppStore();
   const pending = usePendingRun(projectId, 'shots');
   const busy = pending?.status === 'running';
   const blocked = pending !== undefined;
@@ -227,20 +230,51 @@ export function ShotListScreen() {
             <div className="grid grid--3">
               {shots.map((shot) => (
                 <Card key={shot.id} title={`Cut ${shot.no}｜${shot.subject}`}>
-                  <svg
-                    viewBox="0 0 160 100"
-                    className="map"
-                    role="img"
-                    aria-label={`カット${shot.no}のフレーム構成`}
-                  >
-                    <rect x="0" y="0" width="160" height="100" fill="#F7F3EC" />
-                    <rect x="12" y="10" width="136" height="80" fill="none" stroke="#D3C9B8" />
-                    <line x1="57" y1="10" x2="57" y2="90" stroke="#E6E0D6" />
-                    <line x1="103" y1="10" x2="103" y2="90" stroke="#E6E0D6" />
-                    <line x1="12" y1="37" x2="148" y2="37" stroke="#E6E0D6" />
-                    <line x1="12" y1="63" x2="148" y2="63" stroke="#E6E0D6" />
-                    <circle cx="80" cy="50" r="18" fill="#B3936A" opacity="0.35" />
-                  </svg>
+                  {/*
+                    絵コンテの画像（第9章 工程N-12）。
+                    `Shot.assetId` はデータモデルにあり、提案書の枠も解決していたのに、
+                    **登録する画面がどこにも無かった**。提出前チェックは「絵コンテ7点が
+                    未登録」と言い続けるのに、登録する手段が存在しない状態だった。
+                  */}
+                  {resolveAsset(assets, shot.assetId) ? (
+                    <AssetImage
+                      asset={resolveAsset(assets, shot.assetId)}
+                      alt={`Cut ${shot.no}｜${shot.subject}`}
+                    />
+                  ) : (
+                    <svg
+                      viewBox="0 0 160 100"
+                      className="map"
+                      role="img"
+                      aria-label={`カット${shot.no}のフレーム構成`}
+                    >
+                      <rect x="0" y="0" width="160" height="100" fill="#F7F3EC" />
+                      <rect
+                        x="12"
+                        y="10"
+                        width="136"
+                        height="80"
+                        fill="none"
+                        stroke="#D3C9B8"
+                      />
+                      <line x1="57" y1="10" x2="57" y2="90" stroke="#E6E0D6" />
+                      <line x1="103" y1="10" x2="103" y2="90" stroke="#E6E0D6" />
+                      <line x1="12" y1="37" x2="148" y2="37" stroke="#E6E0D6" />
+                      <line x1="12" y1="63" x2="148" y2="63" stroke="#E6E0D6" />
+                      <circle cx="80" cy="50" r="18" fill="#B3936A" opacity="0.35" />
+                    </svg>
+                  )}
+                  <div style={{ marginTop: 8 }}>
+                    <AssetPicker
+                      label={`Cut ${shot.no}｜${shot.subject}`}
+                      assetId={shot.assetId}
+                      onChange={(assetId: string | null) =>
+                        write(
+                          shots.map((row) => (row.id === shot.id ? { ...row, assetId } : row)),
+                        )
+                      }
+                    />
+                  </div>
                   <p style={{ marginTop: 12 }}>{shot.description}</p>
                   <p className="muted">
                     {shot.lens}／{shot.lighting}／{shot.composition}
