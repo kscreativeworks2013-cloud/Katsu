@@ -119,6 +119,9 @@ describe('出力', () => {
                 ? { ...block, caption: 'Cut 1', slotLabel: 'Frames' }
                 : {
                     ...block,
+                    // 軸を書き換えた＝既定ではない（工程R-8）。既定のままだと、
+                    // 提出前チェックが和文の軸名を出して和文フォントが要る。
+                    axesAreDefault: false,
                     axes: {
                       x: ['Classic', 'Modern'] as [string, string],
                       y: ['Quiet', 'Bold'] as [string, string],

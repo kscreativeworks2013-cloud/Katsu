@@ -272,10 +272,23 @@ export function gridCells(
   options: GridOptions,
 ): Rect[] {
   const usedCols = gridColumns(count, options.cols);
+  const rows = Math.ceil(count / usedCols);
+
   return Array.from({ length: count }, (_, index) => {
     const row = Math.floor(index / usedCols);
+    const column = index - row * usedCols;
+    /*
+     * 欠けた行は中央に寄せる（第9章 工程R-7）。
+     *
+     * 左詰めのままだと、5点の面が 3+2 になって最終行の右が空き、面が left-heavy に見える。
+     * 台紙は列数ぶんの幅で引くので、行だけを中に寄せれば版面の重心が戻る。
+     * 枠寸法は動かさない（面をまたいだ寸法の統一を崩さない／第8章 8-6）。
+     */
+    const inRow = row === rows - 1 ? count - row * usedCols : usedCols;
+    const indent = ((usedCols - inRow) * (cell.w + options.gap)) / 2;
+
     return {
-      x: area.x + (index - row * usedCols) * (cell.w + options.gap),
+      x: area.x + indent + column * (cell.w + options.gap),
       y: area.y + row * (cell.h + options.gap),
       w: cell.w,
       h: cell.h,

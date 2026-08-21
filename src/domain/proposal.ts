@@ -28,16 +28,6 @@ export interface ImageSlot {
    */
   offset?: number;
   /**
-   * 面を支配する枠か（第9章 工程R-1）。
-   *
-   * 表紙・ブランド分析・撮影コンセプトのキービジュアルと、絵コンテ・参考カット。
-   * ここに何が入るかで提案書の印象が決まるのに、既定では供給元から offset で
-   * 機械的に取っている。実測：本文が「暗部を残す・半逆光・無彩色」と述べている案件で、
-   * 表紙にハイキーの着物、コンセプトに黄色いサングラスの人物が入った。
-   * 黙って先頭から取ったままにせず、選ばれていないことを提出前チェックに出す。
-   */
-  principal?: boolean;
-  /**
    * 供給元を全点見せる枠か（ムードボード・競合・実績）。
    * true の枠で枠数を超えた素材は「登録したのに出ない」ことになるので知らせる。
    * 表紙のように供給元から1点を選ぶだけの枠は、超過が正常なので対象にしない。
@@ -47,6 +37,32 @@ export interface ImageSlot {
 
 // 配置幅（mm）はここには置かない。版面定義から導出する（`slotWidthMm`／第8章 8-4）。
 // 定数を並べると、版面を動かしたときに印刷解像度の判定だけが古いまま残る。
+
+/**
+ * 「道具が勝手に絞る枠」か（第9章 工程R-1・N-7）。
+ *
+ * 供給元を全点見せる枠（`exhaustive`）でも、枠数が無制限の枠でもないもの。
+ * つまり**供給元の一部だけが載り、どれが載るかを道具が決めている**枠である。
+ * ここに何が入るかで提案書の印象が決まるのに、既定では offset で機械的に取っている。
+ * 実測：本文が「暗部を残す・半逆光・無彩色」と述べている案件で、表紙にハイキーの
+ * 着物、コンセプトに黄色いサングラスの人物が入った。
+ *
+ * **枠ごとに列挙しない。** 列挙すると、枠を足したときに片方だけ更新される
+ * （実測：`shot-frames` に印を付けていたが、枠数が無制限なので選ぶものが無く、
+ * 提出前チェックが「選べ」と言い続ける矛盾になっていた）。
+ */
+export function slotIsPrincipal(slot: ImageSlot): boolean {
+  return slot.exhaustive !== true && Number.isFinite(slot.capacity);
+}
+
+/**
+ * 供給元が枠数を超えていて、利用者が選ぶ余地があるか（第9章 工程N-7）。
+ * 画面のピッカーの表示条件と、提出前チェックの「未選択」判定は**同じこれ**を見る。
+ * 別々に書くと、片方だけが出る（実測：絵コンテは「選べ」と言われるのに画面に出なかった）。
+ */
+export function slotHasChoice(slot: ImageSlot, pool: number): boolean {
+  return pool > slot.capacity;
+}
 
 export interface ProposalSection {
   id: string;
@@ -70,7 +86,6 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
       },
       {
         id: 'cover-key',
-        principal: true,
         label: 'キービジュアル',
         labelEn: 'Key visual',
         source: 'moodboard',
@@ -85,7 +100,6 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'brand-mood',
-        principal: true,
         label: 'ブランドイメージ',
         labelEn: 'Brand imagery',
         source: 'moodboard',
@@ -117,7 +131,6 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'concept-key',
-        principal: true,
         label: 'キービジュアル',
         labelEn: 'Key visual',
         source: 'moodboard',
@@ -149,7 +162,6 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'shot-frames',
-        principal: true,
         label: '絵コンテ',
         labelEn: 'Storyboard',
         source: 'shots',
@@ -170,7 +182,6 @@ export const PROPOSAL_TEMPLATE: ProposalSection[] = [
     imageSlots: [
       {
         id: 'lighting-refs',
-        principal: true,
         label: '参考カット',
         labelEn: 'Reference frames',
         source: 'shots',
@@ -237,7 +248,18 @@ export function slotPoolSize(
  * 実務の前提なので、先頭固定にしない。選択が無ければ offset の位置から枠数ぶん取り、
  * 足りない場合だけ先頭へ回り込む（面が空になるより重複を採る）。
  */
-function take<T extends { id: string }>(pool: T[], slot: ImageSlot, picks?: string[]): T[] {
+function take<T extends { id: string }>(
+  pool: T[],
+  slot: ImageSlot,
+  picks?: string[],
+  /**
+   * 他の枠が**明示的に選んだ**項目（第9章 工程N-3）。
+   * 既定割当はこれを避けて次を取る。実測：表紙を選び直したら、offset で決まる
+   * ブランド分析に同じ写真が入り、重複検知が発火した。利用者が選んだものを
+   * 道具が横から使うのは筋が悪い。
+   */
+  claimed?: ReadonlySet<string>,
+): T[] {
   if (pool.length === 0) return [];
 
   if (picks && picks.length > 0) {
@@ -250,7 +272,15 @@ function take<T extends { id: string }>(pool: T[], slot: ImageSlot, picks?: stri
 
   const count = Math.min(slot.capacity, pool.length);
   const start = (slot.offset ?? 0) % pool.length;
-  return Array.from({ length: count }, (_, index) => pool[(start + index) % pool.length]);
+  // 選ばれていないものを優先して拾う。尽きたら避けずに埋める——枠を空にするより、
+  // 重複して出して提出前チェックで知らせるほうがよい（第8章 8-7 と同じ判断）。
+  const order = Array.from(
+    { length: pool.length },
+    (_, index) => pool[(start + index) % pool.length],
+  );
+  const free = claimed ? order.filter((item) => !claimed.has(item.id)) : order;
+  const picked = [...free, ...order.filter((item) => !free.includes(item))];
+  return picked.slice(0, count);
 }
 
 /** スロットに入る画像を解決する。アセット未登録でも参照切れで壊れない（第5章 5-1）。 */
@@ -259,6 +289,8 @@ export function resolveSlot(
   workspace: Workspace,
   portfolio: PortfolioWork[],
   assets: Record<string, Asset>,
+  /** 他の枠が明示的に選んだ項目。既定割当はこれを避ける（第9章 工程N-3）。 */
+  claimed: ReadonlySet<string> = new Set(),
 ): ResolvedSlotImage[] {
   const withFocus = (image: ResolvedSlotImage): ResolvedSlotImage => ({
     ...image,
@@ -273,7 +305,7 @@ export function resolveSlot(
       return logo ? [withFocus({ key: `${slot.id}-logo`, caption: '', asset: logo })] : [];
     }
     case 'moodboard':
-      return take(workspace.moodboard, slot, picks).map((tile) =>
+      return take(workspace.moodboard, slot, picks, claimed).map((tile) =>
         withFocus({
           key: `${slot.id}-${tile.id}`,
           caption: tile.caption,
@@ -282,7 +314,7 @@ export function resolveSlot(
         }),
       );
     case 'shots':
-      return take(workspace.shots, slot, picks).map((shot) =>
+      return take(workspace.shots, slot, picks, claimed).map((shot) =>
         withFocus({
           key: `${slot.id}-${shot.id}`,
           // キャプションは識別子だけにする。被写体・レンズ・構図は本文が持っており、
@@ -292,7 +324,7 @@ export function resolveSlot(
         }),
       );
     case 'competitors':
-      return take(workspace.competitors, slot, picks).map((competitor) =>
+      return take(workspace.competitors, slot, picks, claimed).map((competitor) =>
         withFocus({
           key: `${slot.id}-${competitor.id}`,
           caption: competitor.name,
@@ -300,7 +332,7 @@ export function resolveSlot(
         }),
       );
     case 'portfolio':
-      return take(portfolio, slot, picks).map((work) =>
+      return take(portfolio, slot, picks, claimed).map((work) =>
         withFocus({
           key: `${slot.id}-${work.id}`,
           caption: work.title,
@@ -309,4 +341,14 @@ export function resolveSlot(
         }),
       );
   }
+}
+
+/**
+ * 明示的に選ばれた項目のID（第9章 工程N-3）。
+ *
+ * 既定割当がこれを避けるための材料。**選択（`picks`）だけを集める**——既定で入った
+ * ものまで避けると、供給元が少ないときに枠が空く。
+ */
+export function claimedItemIds(workspace: Workspace): Set<string> {
+  return new Set(Object.values(workspace.picks ?? {}).flat());
 }

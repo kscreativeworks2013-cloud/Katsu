@@ -1,10 +1,22 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { CropFocus, ProposalBody } from '../data/types';
-import { ASSET_ORIGIN_LABEL } from '../domain/assets';
+import {
+  ASSET_ORIGIN_LABEL,
+  effectivePpi,
+  requiredPixels,
+  resolveAsset,
+  variantOf,
+} from '../domain/assets';
+import { slotWidthMm, slotWidthRatio } from '../domain/render/layout';
 import type { Lang } from '../domain/ir';
-import { PROPOSAL_TEMPLATE, resolveSlot, type ProposalSection } from '../domain/proposal';
-import type { PortfolioWork, Workspace } from '../data/types';
+import {
+  PROPOSAL_TEMPLATE,
+  resolveSlot,
+  slotHasChoice,
+  type ProposalSection,
+} from '../domain/proposal';
+import type { Asset, PortfolioWork, Workspace } from '../data/types';
 import { isProtected } from '../domain/provenance';
 import { staleStepLabels } from '../lib/projects';
 import { useAppStore, usePendingRun, useProject } from '../store/context';
@@ -12,26 +24,48 @@ import { AssetImage } from '../ui/AssetImage';
 import { Card, PageHeader } from '../ui/primitives';
 
 /** 枠の供給元にある項目（選択UIの候補）。 */
+/** ピッカーに出す候補。原寸の幅を持たせて、その枠で足りるかを候補ごとに言う。 */
+interface PoolItem {
+  id: string;
+  label: string;
+  /** 登録済みの原寸の幅（px）。未登録なら undefined。 */
+  width?: number;
+}
+
 function slotPool(
   slot: ProposalSection['imageSlots'][number],
   workspace: Workspace,
   portfolio: PortfolioWork[],
-): { id: string; label: string }[] {
+  assets: Record<string, Asset>,
+): PoolItem[] {
+  const widthOf = (assetId?: string | null): number | undefined =>
+    variantOf(resolveAsset(assets, assetId), 'original')?.width;
+
   switch (slot.source) {
     case 'moodboard':
-      return workspace.moodboard.map((tile) => ({ id: tile.id, label: tile.caption }));
+      return workspace.moodboard.map((tile) => ({
+        id: tile.id,
+        label: tile.caption,
+        width: widthOf(tile.assetId),
+      }));
     case 'shots':
       return workspace.shots.map((shot) => ({
         id: shot.id,
         label: `Cut ${shot.no}｜${shot.subject}`,
+        width: widthOf(shot.assetId),
       }));
     case 'competitors':
       return workspace.competitors.map((competitor) => ({
         id: competitor.id,
         label: competitor.name,
+        width: widthOf(competitor.assetId),
       }));
     case 'portfolio':
-      return portfolio.map((work) => ({ id: work.id, label: work.title }));
+      return portfolio.map((work) => ({
+        id: work.id,
+        label: work.title,
+        width: widthOf(work.assetId),
+      }));
     case 'logo':
       return [];
   }
@@ -113,30 +147,65 @@ const FOCUS_OPTIONS: { label: string; value: string }[] = [
 function CropFocusPicker({
   imageKey,
   focus,
+  precise,
   onChange,
 }: {
   imageKey: string;
   focus: CropFocus | undefined;
+  /**
+   * 連続値でも指定できるようにするか（第9章 工程N-5）。
+   *
+   * 全面帯は 297×138.6mm ＝ 約 2.14:1 で、2:3 の縦位置素材からは高さの6割以上を切る。
+   * 10択（0／0.5／1）では刻みが粗すぎて主題が保てない——実測で帽子の天面が切れた。
+   * 帯の枠に限ってスライダーを添える。細かく指定できて困る面ではない。
+   */
+  precise?: boolean;
   onChange: (focus: CropFocus | null) => void;
 }) {
+  const current = focus ?? { x: 0.5, y: 0 };
+
   return (
-    <label className="row" style={{ gap: 6, marginTop: 4 }}>
-      <span className="muted">切り出し</span>
-      <select
-        value={focus ? `${focus.x},${focus.y}` : ''}
-        aria-label={`${imageKey}の切り出し位置`}
-        onChange={(event) => {
-          const [x, y] = event.target.value.split(',').map(Number);
-          onChange(event.target.value === '' ? null : { x, y });
-        }}
-      >
-        {FOCUS_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="stack" style={{ gap: 4, marginTop: 4 }}>
+      <label className="row" style={{ gap: 6 }}>
+        <span className="muted">切り出し</span>
+        <select
+          value={focus ? `${focus.x},${focus.y}` : ''}
+          aria-label={`${imageKey}の切り出し位置`}
+          onChange={(event) => {
+            const [x, y] = event.target.value.split(',').map(Number);
+            onChange(event.target.value === '' ? null : { x, y });
+          }}
+        >
+          {FOCUS_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {precise && (
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          {(['x', 'y'] as const).map((axis) => (
+            <label className="row" style={{ gap: 6 }} key={axis}>
+              <span className="muted">{axis === 'x' ? '左右' : '上下'}</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(current[axis] * 100)}
+                aria-label={`${imageKey}の切り出し位置（${axis === 'x' ? '左右' : '上下'}）`}
+                onChange={(event) =>
+                  onChange({ ...current, [axis]: Number(event.target.value) / 100 })
+                }
+              />
+              <span className="muted">{Math.round(current[axis] * 100)}%</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -153,11 +222,12 @@ function SlotPicker({
   onChange,
 }: {
   slot: ProposalSection['imageSlots'][number];
-  pool: { id: string; label: string }[];
+  pool: PoolItem[];
   picks: string[] | undefined;
   onChange: (ids: string[]) => void;
 }) {
-  if (pool.length <= slot.capacity) return null;
+  // 表示条件は提出前チェックの「未選択」判定と同じものを見る（第9章 工程N-7）。
+  if (!slotHasChoice(slot, pool.length)) return null;
   const chosen = picks ?? pool.slice(0, slot.capacity).map((item) => item.id);
 
   /*
@@ -168,6 +238,11 @@ function SlotPicker({
    * これで、画面から一度も変更できなかった。ラジオなら1回の操作で入れ替わる。
    */
   const single = slot.capacity === 1;
+
+  // その枠に置かれる実寸。候補ごとの ppi はここから決まる（第8章 8-4）。
+  const widthMm = slotWidthMm(slot.id, Math.min(slot.capacity, pool.length));
+  const fits = (item: PoolItem): boolean =>
+    item.width === undefined || item.width >= requiredPixels(widthMm);
 
   return (
     <details className="stack" style={{ gap: 6, marginTop: 6 }}>
@@ -206,6 +281,18 @@ function SlotPicker({
                 }
               />
               <span>{item.label}</span>
+              {/*
+                候補ごとに、その枠での実効解像度を出す（第9章 工程N-4）。
+                全面配置は 2,339px 要るので候補が絞られるが、画面がそれを示さないと
+                選んでから警告で気づくことになる。基準を満たさない候補も**選べる**
+                ——隠すと「なぜ選べないのか」が分からず、判断も奪う。
+              */}
+              {item.width !== undefined && (
+                <span className={fits(item) ? 'muted' : 'form-error'}>
+                  {effectivePpi(item.width, widthMm)}ppi
+                  {fits(item) ? '' : `（${requiredPixels(widthMm)}px 必要）`}
+                </span>
+              )}
             </label>
           );
         })}
@@ -237,7 +324,7 @@ function SectionSlots({
   slots: {
     slot: ProposalSection['imageSlots'][number];
     images: ReturnType<typeof resolveSlot>;
-    pool: { id: string; label: string }[];
+    pool: PoolItem[];
   }[];
   crops: Record<string, CropFocus>;
   onCrop: (key: string, focus: CropFocus | null) => void;
@@ -277,6 +364,8 @@ function SectionSlots({
                         <CropFocusPicker
                           imageKey={image.key}
                           focus={crops[image.key]}
+                          // 全面帯（表紙・撮影コンセプト）は切る量が大きいので連続値も出す。
+                          precise={slotWidthRatio(slot.id) === 1}
                           onChange={(focus) => onCrop(image.key, focus)}
                         />
                       </>
@@ -376,7 +465,7 @@ export function ProposalPreviewScreen() {
             const slots = section.imageSlots.map((slot) => ({
               slot,
               images: resolveSlot(slot, workspace, portfolio, assets),
-              pool: slotPool(slot, workspace, portfolio),
+              pool: slotPool(slot, workspace, portfolio, assets),
             }));
             const hasImages = slots.some(({ images }) => images.length > 0);
             const step = SECTION_STEP[section.id];

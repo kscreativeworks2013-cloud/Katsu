@@ -19,7 +19,13 @@ import type {
 import { effectivePpi, pickVariant, requiredPixels, resolveAsset } from './assets';
 import { slotWidthMm } from './render/layout';
 import { deriveTheme, type RenderTheme } from './render/theme';
-import { PROPOSAL_TEMPLATE, resolveSlot, slotPoolSize } from './proposal';
+import {
+  PROPOSAL_TEMPLATE,
+  resolveSlot,
+  slotPoolSize,
+  slotIsPrincipal,
+  claimedItemIds,
+} from './proposal';
 import { metaFor } from './provenance';
 
 export const IR_VERSION = 1;
@@ -50,6 +56,13 @@ export type IRBlock =
        */
       type: 'map';
       axes: { x: [string, string]; y: [string, string] };
+      /**
+       * 軸の名前が道具の既定のままか（第9章 工程R-8）。
+       * 本文は手で書けるのに軸は生成物なので、手を入れるほど同じ面の中で食い違う。
+       * 編集する導線を持つには `Workspace` に軸を持たせる必要があり、それは
+       * スキーマ v4 になる。通しの凍結中は**既定のままであることを知らせる**に留める。
+       */
+      axesAreDefault?: boolean;
       points: { label: string; x: number; y: number; self?: boolean }[];
     }
   | {
@@ -149,8 +162,8 @@ export interface IRSlotUsage {
   /** 説明文が付いていない枠の数（キャプション未設定）。 */
   unnamed: number;
   /**
-   * 面を支配する枠か（第9章 工程R-1）。表紙・ブランド分析・撮影コンセプトの
-   * キービジュアルと、絵コンテ・参考カット。
+   * 道具が勝手に絞る枠か（第9章 工程R-1・N-7）。
+   * 供給元の一部だけが載り、どれが載るかを道具が決めている枠。判定は `slotIsPrincipal`。
    */
   principal: boolean;
   /**
@@ -266,6 +279,8 @@ function positioningMap(input: BuildIRInput): IRBlock | undefined {
   return {
     type: 'map',
     axes: { x: ['クラシック', 'モダン'], y: ['ミニマル', 'ドラマティック'] },
+    // 編集する導線がまだ無いので、常に既定である（工程R-8）。
+    axesAreDefault: true,
     points: [
       ...competitors.map((item) => ({ label: item.name, x: item.x, y: item.y })),
       { label: input.project.brand, x: best.x, y: best.y, self: true },
@@ -287,7 +302,13 @@ function imageBlocks(
     // 枠名は提出前チェックの文にそのまま入る。英語版で日英が混ざらないよう引き分ける
     // （第9章 工程00-b-2）。警告文そのものは和文で組むので slot.label を使う。
     const slotName = input.lang === 'ja' ? slot.label : slot.labelEn;
-    const images = resolveSlot(slot, input.workspace, input.portfolio, input.assets);
+    const images = resolveSlot(
+      slot,
+      input.workspace,
+      input.portfolio,
+      input.assets,
+      claimedItemIds(input.workspace),
+    );
     if (images.length === 0) {
       warnings.push({
         kind: 'missing-image',
@@ -308,7 +329,7 @@ function imageBlocks(
       pool: slotPoolSize(slot, input.workspace, input.portfolio),
       shown: images.length,
       exhaustive: slot.exhaustive === true,
-      principal: slot.principal === true,
+      principal: slotIsPrincipal(slot),
       // 選択があるかどうかだけを見る。中身の妥当性は利用者にしか判断できない。
       chosen: (input.workspace.picks?.[slot.id]?.length ?? 0) > 0,
       // ロゴはキャプションを描かない枠なので、説明文の有無を数えない。
@@ -424,7 +445,13 @@ const PROMINENT_SLOTS = [
   // 実績を含める（第9章 工程00-c）。実績は「自分の仕事」であって参照元ではないので、
   // ムードボードと同じ写真が出るなら、参考画像を自作として見せていることになる。
   'works-grid',
+  // 競合も含める（第9章 工程N-7）。同じ写真が2社を代表しているなら、それは誤りである。
+  'competitor-refs',
 ];
+/*
+ * `lighting-refs` は意図的に外す。供給元がショットリストと同じで offset 違いなので、
+ * 絵コンテと重なるのが**設計**である（第8章 8-10）。ここを対象に入れると常時発火する。
+ */
 
 /*
  * ムードボードの枠（第9章 工程00-c）。

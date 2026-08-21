@@ -28,6 +28,20 @@ export function MoodboardScreen() {
     editField(projectId, 'moodboard.tiles', next);
   }
 
+  /**
+   * 画面で枠を見分けるための名前（第9章 工程R-5）。
+   *
+   * 説明文は空でよい（納品物には出さない）が、**画面では区別が要る**。
+   * 説明文が同じ／空のタイルが並ぶと、画像登録ボタンの名前も画像の代替テキストも
+   * 同一になり、どの枠を触っているのか分からない（実測でここで作業が止まった）。
+   * 出力には使わない、画面だけの呼び名である。
+   */
+  function tileLabel(tile: { id: string; caption: string }, all: { id: string }[]): string {
+    const trimmed = tile.caption.trim();
+    if (trimmed !== '') return trimmed;
+    return `タイル ${all.findIndex((row) => row.id === tile.id) + 1}（説明文なし）`;
+  }
+
   function addTile(category: MoodCategory) {
     const palette = workspace?.brand?.palette ?? [];
     write([
@@ -35,7 +49,14 @@ export function MoodboardScreen() {
       {
         id: createId('mood'),
         category,
-        caption: '新しいタイル',
+        /*
+         * 説明文は空で作る（第9章 工程R-5）。
+         * 「新しいタイル」のような既定名を入れると、書き換え忘れがそのまま
+         * 納品物のキャプションに載る（実測：「追加タイル 2」が撮影コンセプトの
+         * 全面キャプションとして出力された）。空なら出力側が出自だけを出し、
+         * 提出前チェックが未設定として数える。
+         */
+        caption: '',
         source: '手動追加',
         from: palette[0]?.hex ?? '#E6E0D6',
         to: palette[2]?.hex ?? '#B3936A',
@@ -132,7 +153,7 @@ export function MoodboardScreen() {
                         <figure className="tile" key={tile.id} style={{ margin: 0 }}>
                           <AssetImage
                             asset={asset}
-                            alt={tile.caption}
+                            alt={tileLabel(tile, tiles)}
                             fallback={{ from: tile.from, to: tile.to }}
                           />
                           <figcaption className="tile-body">
@@ -154,7 +175,7 @@ export function MoodboardScreen() {
                             <p>出典：{tile.source}</p>
                             <div style={{ marginTop: 8 }}>
                               <AssetPicker
-                                label={tile.caption}
+                                label={tileLabel(tile, tiles)}
                                 assetId={tile.assetId}
                                 onChange={(assetId) =>
                                   write(
@@ -170,7 +191,7 @@ export function MoodboardScreen() {
                                 className="btn btn--ghost btn--small"
                                 type="button"
                                 onClick={() => move(tile.id, -1)}
-                                aria-label={`${tile.caption} を前へ`}
+                                aria-label={`${tileLabel(tile, tiles)} を前へ`}
                               >
                                 ←
                               </button>
@@ -178,7 +199,7 @@ export function MoodboardScreen() {
                                 className="btn btn--ghost btn--small"
                                 type="button"
                                 onClick={() => move(tile.id, 1)}
-                                aria-label={`${tile.caption} を後ろへ`}
+                                aria-label={`${tileLabel(tile, tiles)} を後ろへ`}
                               >
                                 →
                               </button>
@@ -186,7 +207,7 @@ export function MoodboardScreen() {
                                 className="btn btn--ghost btn--small"
                                 type="button"
                                 onClick={() => write(tiles.filter((row) => row.id !== tile.id))}
-                                aria-label={`${tile.caption} を削除`}
+                                aria-label={`${tileLabel(tile, tiles)} を削除`}
                               >
                                 削除
                               </button>

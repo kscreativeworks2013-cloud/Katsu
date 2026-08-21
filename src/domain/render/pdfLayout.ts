@@ -685,7 +685,7 @@ export async function renderLayoutPdf(
   );
   first.line(
     chrome.subtitle(ir.project.brand, ir.project.client),
-    { x: margin.x, y: 0.838 },
+    { x: margin.x, y: 0.836 },
     { size: first.size('heading'), color: palette.accent },
   );
   /*
@@ -695,13 +695,18 @@ export async function renderLayoutPdf(
    * 出ないままだと入力の消失と区別がつかない（実測：65字が黙って消えた）。
    * 題字と日付の間に `LEAD_LINES` 行まで置く。超えた分は提出前チェックが件数で言う。
    */
+  /*
+   * リードは**読ませる文**であって注記ではない（第9章 工程N-6）。
+   * caption 級で組むと提案日と同じ大きさになり、目が注記として飛ばす。
+   * 本文級で組み、副題との間を1行ぶん空けて、日付とは級数で切り分ける。
+   */
   const coverLead = cover ? textLines(cover, chrome).slice(0, LEAD_LINES) : [];
-  const LEAD_STEP = 0.023;
+  const LEAD_STEP = 0.026;
   coverLead.forEach((line, index) => {
     first.line(
       first.clip(line, 1 - margin.x * 2),
-      { x: margin.x, y: 0.874 + index * LEAD_STEP },
-      { size: first.size('caption'), color: palette.ink },
+      { x: margin.x, y: 0.872 + index * LEAD_STEP },
+      { size: first.size('body'), color: palette.ink },
     );
   });
 
@@ -712,7 +717,7 @@ export async function renderLayoutPdf(
    */
   first.line(
     chrome.dateLine(ir.project.proposalDate, ir.revision),
-    { x: margin.x, y: Math.min(0.874 + coverLead.length * LEAD_STEP + 0.004, 0.923) },
+    { x: margin.x, y: Math.min(0.872 + coverLead.length * LEAD_STEP + 0.008, 0.923) },
     { color: palette.muted },
   );
 
@@ -1041,9 +1046,22 @@ export async function renderLayoutPdf(
     // 枠寸法は章全体で1つ。面ごとに残数から出すと、同じ枠が面によって大きさを変える。
     const cell = cellSize(blocks.length, area, options);
 
-    for (let start = 0; start < blocks.length; start += perPage) {
+    /*
+     * 面への配分を均す（第9章 工程R-7）。
+     *
+     * 先頭から詰めると 10点＝6+4 になり、2面目は 2+2 で台紙が版面の左3分の2で終わる。
+     * 面数は変えずに均等へ寄せて 5+5 にすれば、どちらの面も3列で埋まり、
+     * 欠けた行だけが中央寄せになる。枠寸法は章全体で1つのままなので、
+     * 面をまたいだ寸法の統一（第8章 8-6）は崩れない。
+     */
+    const pages = Math.max(1, Math.ceil(blocks.length / perPage));
+    const shares = Array.from({ length: pages }, (_, index) =>
+      Math.ceil((blocks.length - index) / pages),
+    );
+
+    let start = 0;
+    for (const onPage of shares) {
       const page = sheet();
-      const onPage = Math.min(perPage, blocks.length - start);
       const cells = gridCells(onPage, area, cell, options);
 
       // 台紙はタイル群の実寸に合わせる（残数の少ない面で右側が大きく空かない）。
@@ -1074,6 +1092,7 @@ export async function renderLayoutPdf(
       for (let index = 0; index < onPage; index += 1) {
         await place(page, cells[index], blocks[start + index], { edge: true });
       }
+      start += onPage;
     }
   }
 

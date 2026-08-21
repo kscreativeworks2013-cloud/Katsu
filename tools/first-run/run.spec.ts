@@ -167,24 +167,25 @@ test('実案件1本を通す（前半：表紙〜ムードボード）', async (
   const registered = await timed('ムードボード10点の登録', async () => {
     await page.goto(`/projects/${projectId}/moodboard`);
     const pickers = page.getByRole('button', { name: /に画像を登録$/ });
-    let count = await pickers.count();
 
     /*
      * 生成されるタイルは8枚。素材は10点あるので2枚足す（枠を素材に合わせる）。
      *
-     * 足したタイルの説明文はどれも「新しいタイル」で、そのまま登録しようとすると
-     * 枠を見分けられない（画像登録ボタンの名前も画像の代替テキストも同じになる）。
-     * 実際に手で通すときも、まず名前を付け直すことになる。通しで見つかった事象として
-     * 記録した（第9章 9-20）。
+     * 追加したタイルの説明文は空で作られる（第9章 工程R-5）。以前は「新しいタイル」が
+     * 既定で入り、書き換え忘れがそのまま納品物のキャプションに載っていた。
+     * 画面では「タイル N（説明文なし）」として区別できるので、登録作業は止まらない。
+     * ここでは実際の利用と同じく、説明文を付けてから登録する。
      */
-    while (count < MOOD_PHOTOS.length) {
+    const ADDED_CAPTIONS = ['町屋の格子越しの光', '黒の締まりと余白'];
+    for (const caption of ADDED_CAPTIONS) {
       await page.getByRole('button', { name: 'タイルを追加' }).first().click();
-      const added = page.getByRole('textbox').filter({ hasText: '' });
-      void added;
-      const fresh = page.locator('input[value="新しいタイル"]').first();
-      await fresh.fill(`追加タイル ${count - 7}`);
-      count = await pickers.count();
+      const fresh = page
+        .getByRole('figure')
+        .filter({ has: page.getByRole('button', { name: /（説明文なし）に画像を登録$/ }) })
+        .first();
+      await fresh.getByRole('textbox', { name: 'キャプション' }).fill(caption);
     }
+    expect(await pickers.count()).toBe(MOOD_PHOTOS.length);
 
     // 登録が済んだタイルの「画像を登録」は消える（貼り直しに変わる）ので、
     // 添字で回すとずれる。常に残っている先頭を取る。
@@ -258,6 +259,17 @@ test('実案件1本を通す（前半：表紙〜ムードボード）', async (
       // 枠数1の枠はラジオ。押した時点で入れ替わる（第9章 工程R-1）。
       await slot.getByRole('radio', { name: caption }).check();
     }
+    /*
+     * 表紙の切り出しを指定する（第9章 工程N-5）。
+     * 全面帯は約 2.14:1 で、3:2 の素材からは高さの3割を切る。既定（上寄せ）でも
+     * 帽子の天面が落ちたので、上端を残す指定に変える。
+     */
+    const cover = page.locator('#page-cover');
+    await cover
+      .getByRole('combobox', { name: /の切り出し位置$/ })
+      .first()
+      .selectOption('0.5,0');
+
     return `全面配置に耐えるタイル ${wide.length} 件から選択`;
   });
 

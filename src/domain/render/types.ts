@@ -54,20 +54,6 @@ export function isDraft(ir: ProposalIR): boolean {
   );
 }
 
-/**
- * 出力物に載せる警告の要約（第6章 6-4）。
- * 同じ画像が複数のスロットに出ると同文が並ぶため、重複は畳む。
- */
-export function warningSummary(ir: ProposalIR): string[] {
-  return [
-    ...new Set(
-      ir.warnings
-        .filter((warning) => warning.severity === 'warn')
-        .map((warning) => warning.message),
-    ),
-  ];
-}
-
 /*
  * 提出前チェックの文（第9章 工程00-b-2）。
  *
@@ -88,6 +74,10 @@ const SUMMARY = {
     dropped_body: (title: string, count: number) =>
       `${title}に書いた本文${count}行は、この面の版面に載りません。`,
     breakdown: (title: string, count: number) => `${title}${count}`,
+    stale: (titles: string[]) =>
+      `上流の変更が反映されていない章が${titles.length}件あります（${titles.join('、')}）。`,
+    defaultAxes: (x: string, y: string) =>
+      `ポジショニングマップの軸は既定のままです（${x}／${y}）。本文で別の軸を述べている場合は食い違って読めます。`,
     join: '、',
     outsideSection: '章外',
   },
@@ -103,10 +93,45 @@ const SUMMARY = {
     dropped_body: (title: string, count: number) =>
       `${count} line(s) of body text written for ${title} do not fit this page's layout.`,
     breakdown: (title: string, count: number) => `${title} ${count}`,
+    stale: (titles: string[]) =>
+      `${titles.length} chapter(s) have not picked up upstream changes (${titles.join(', ')}).`,
+    defaultAxes: (x: string, y: string) =>
+      `The positioning map still uses the default axes (${x} / ${y}). If the body text names different ones, the page contradicts itself.`,
     join: ', ',
     outsideSection: 'unassigned',
   },
 } as const;
+
+/**
+ * 出力物に載せる警告の要約（第6章 6-4）。
+ * 同じ画像が複数のスロットに出ると同文が並ぶため、重複は畳む。
+ */
+export function warningSummary(ir: ProposalIR): string[] {
+  const warn = ir.warnings.filter((warning) => warning.severity === 'warn');
+
+  /*
+   * stale は1行にまとめる（第9章 工程R-6）。
+   *
+   * 章ごとに1行ずつ並べると、本文を手で入れた直後は下流が一斉に stale になって
+   * 面が列挙で埋まる。実測：8行並び、**148ppi の警告がその2行目に埋もれた**。
+   * 個々に正しくても、読まれなければ警告として機能しない。
+   */
+  const stale = warn.filter((warning) => warning.kind === 'stale');
+  const rest = [...new Set(warn.filter((w) => w.kind !== 'stale').map((w) => w.message))];
+
+  if (stale.length === 0) return rest;
+
+  const titles = new Map(ir.sections.map((section) => [section.id, section.title]));
+  const named = [
+    ...new Set(
+      stale.map((warning) => titles.get(warning.sectionId ?? '') ?? warning.sectionId ?? ''),
+    ),
+  ].filter((title) => title !== '');
+
+  // 重大度の高いものを先に置く。解像度不足は「このまま出すと壊れている」側で、
+  // stale は「内容が古いかもしれない」側である。
+  return [...rest, SUMMARY[ir.lang === 'en' ? 'en' : 'ja'].stale(named)];
+}
 
 /**
  * 提出前チェック（第6章 6-4、第8章 8-7）。
@@ -136,7 +161,11 @@ export function checklistSummary(ir: ProposalIR): string[] {
    * 既定は供給元の並び順なので、放っておくと「たまたま先頭にあった写真」が表紙になる。
    * 実測：本文が暗部と半逆光を述べている案件で、表紙にハイキーの着物が入った。
    */
-  const unchosen = ir.slots.filter((slot) => slot.principal && !slot.chosen && slot.shown > 0);
+  // 選ぶ余地があった枠だけを数える（第9章 工程N-7）。
+  // 供給元が枠数以下なら選びようがないので、未選択と呼ばない（ロゴがこれ）。
+  const unchosen = ir.slots.filter(
+    (slot) => slot.principal && !slot.chosen && slot.shown > 0 && slot.pool > slot.shown,
+  );
   const choosing =
     unchosen.length > 0
       ? [
@@ -165,6 +194,19 @@ export function checklistSummary(ir: ProposalIR): string[] {
     return over > 0 ? [say.dropped_body(section.title, over)] : [];
   });
 
+  /*
+   * 軸が既定のまま（第9章 工程R-8）。
+   * 本文は手で書けるのに軸は生成物なので、同じ面の中で食い違う。
+   * 編集の導線はスキーマ v4 が要るため、いまは既定であることを言うに留める。
+   */
+  const defaultAxes = ir.sections
+    .flatMap((section) => section.blocks)
+    .filter((block) => block.type === 'map' && block.axesAreDefault === true)
+    .map((block) => {
+      const map = block as Extract<typeof block, { type: 'map' }>;
+      return say.defaultAxes(map.axes.x.join('⇄'), map.axes.y.join('⇄'));
+    });
+
   const missing = info.filter((warning) => warning.kind === 'missing-image');
   // 内訳は枠の名前でまとめる。章名でまとめると、画像の入っている面（表紙）に
   // 未登録があるように読めてしまう（実体はロゴ枠）。
@@ -181,6 +223,7 @@ export function checklistSummary(ir: ProposalIR): string[] {
   const lines = [
     ...new Set(info.filter((w) => w.kind !== 'missing-image').map((w) => w.message)),
     ...droppedBody,
+    ...defaultAxes,
     ...choosing,
     ...dropped,
     ...naming,

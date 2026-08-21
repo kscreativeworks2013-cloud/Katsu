@@ -28,6 +28,13 @@ describe('checklistSummary', () => {
     const empty = {
       ...ir,
       warnings: [],
+      // 軸も確かめ終えた状態（工程R-8）。既定のままなら、それ自体が指摘になる。
+      sections: ir.sections.map((section) => ({
+        ...section,
+        blocks: section.blocks.map((block) =>
+          block.type === 'map' ? { ...block, axesAreDefault: false } : block,
+        ),
+      })),
       // 主要枠を選び終えた状態。選んでいなければ、それ自体が指摘になる（工程R-1）。
       slots: ir.slots.map((slot) => ({
         ...slot,
@@ -130,10 +137,11 @@ describe('英語版の提出前チェック', () => {
 describe('主要枠の未選択', () => {
   it('は件数と枠名を出す', () => {
     const ir = buildTestIR();
+    // 供給元が枠数を超えている＝選ぶ余地がある状態（第9章 工程N-7）。
     const line = checklistSummary({
       ...ir,
       warnings: [],
-      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0 })),
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown + 5, unnamed: 0 })),
     }).find((item) => item.includes('未選択'));
 
     expect(line).toContain('表紙／キービジュアル');
@@ -147,10 +155,21 @@ describe('主要枠の未選択', () => {
       warnings: [],
       slots: ir.slots.map((slot) => ({
         ...slot,
-        pool: slot.shown,
+        pool: slot.shown + 5,
         unnamed: 0,
         chosen: true,
       })),
+    });
+
+    expect(lines.some((line) => line.includes('未選択'))).toBe(false);
+  });
+
+  it('は選ぶ余地が無い枠を数えない（供給元が枠数以下＝ロゴ）', () => {
+    const ir = buildTestIR();
+    const lines = checklistSummary({
+      ...ir,
+      warnings: [],
+      slots: ir.slots.map((slot) => ({ ...slot, pool: slot.shown, unnamed: 0 })),
     });
 
     expect(lines.some((line) => line.includes('未選択'))).toBe(false);

@@ -58,13 +58,29 @@ describe('gridCells', () => {
     expect(new Set(cells.map((cell) => cell.y)).size).toBe(2);
   });
 
-  it('は5枚（3+2）でも左端と列グリッドを保つ', () => {
+  /*
+   * 欠けた行は中央に寄せる（第9章 工程R-7）。
+   * 左詰めのままだと最終行の右が空き、面が左に偏って見える。
+   * 台紙は列数ぶんの幅で引くので、行だけを中に寄せれば重心が戻る。
+   */
+  it('は5枚（3+2）の最終行を中央へ寄せる', () => {
     const cells = gridCells(5, area, cellSize(5, area, tiles), tiles);
     const top = cells.slice(0, 3);
     const bottom = cells.slice(3);
 
-    expect(bottom[0].x).toBe(area.x);
-    expect(bottom.map((cell) => cell.x)).toEqual(top.slice(0, 2).map((cell) => cell.x));
+    const leftGap = bottom[0].x - area.x;
+    const rightGap = top[2].x + top[2].w - (bottom[1].x + bottom[1].w);
+    expect(leftGap).toBeCloseTo(rightGap, 6);
+
+    // 枠寸法は動かさない。中央寄せは位置だけの操作である。
+    expect(new Set(cells.map((cell) => cell.w)).size).toBe(1);
+  });
+
+  it('は行が埋まっていれば左端を版面に合わせる', () => {
+    const cells = gridCells(6, area, cellSize(6, area, tiles), tiles);
+
+    expect(cells[0].x).toBe(area.x);
+    expect(cells[3].x).toBe(area.x);
   });
 
   it('は同じ行の枠の下端を揃える', () => {
